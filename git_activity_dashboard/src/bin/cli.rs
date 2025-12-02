@@ -148,17 +148,32 @@ fn print_summary(analyzer: &GitAnalyzer) {
 
     if !stats.languages.is_empty() {
         println!("\n{}", "-".repeat(40));
-        println!("TOP LANGUAGES");
+        println!("PROGRAMMING LANGUAGES");
         println!("{}", "-".repeat(40));
 
         let mut sorted_langs: Vec<_> = stats.languages.iter().collect();
         sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
-        let total: u32 = sorted_langs.iter().map(|(_, c)| *c).sum();
 
-        for (lang, count) in sorted_langs.iter().take(8) {
-            let pct = (**count as f64 / total as f64) * 100.0;
-            let bar = "█".repeat((pct / 2.0) as usize);
+        for (lang, _count) in sorted_langs.iter().take(8) {
+            let pct = stats.language_percentages.get(*lang).unwrap_or(&0.0);
+            let bar = "█".repeat((*pct / 2.0) as usize);
             println!("  {:20} {:5.1}% {}", lang, pct, bar);
+        }
+    }
+
+    // File extensions
+    if !stats.file_extensions.is_empty() {
+        println!("\n{}", "-".repeat(40));
+        println!("FILE TYPES (by extension)");
+        println!("{}", "-".repeat(40));
+
+        let mut sorted_exts: Vec<_> = stats.file_extensions.iter().collect();
+        sorted_exts.sort_by(|a, b| b.1.cmp(a.1));
+
+        for (ext, _count) in sorted_exts.iter().take(10) {
+            let pct = stats.file_extension_percentages.get(*ext).unwrap_or(&0.0);
+            let bar = "█".repeat((*pct / 2.0) as usize);
+            println!("  {:20} {:5.1}% {}", ext, pct, bar);
         }
     }
 

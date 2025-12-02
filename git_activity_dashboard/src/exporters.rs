@@ -54,18 +54,36 @@ impl MarkdownExporter {
         }
         lines.push(String::new());
 
-        // Languages
+        // Languages (Programming Languages)
         if !stats.languages.is_empty() {
-            lines.push("## Languages".to_string());
+            lines.push("## Programming Languages".to_string());
             lines.push(String::new());
-            lines.push("| Language | Lines |".to_string());
-            lines.push("|----------|-------|".to_string());
+            lines.push("| Language | Lines | Percentage |".to_string());
+            lines.push("|----------|-------|------------|".to_string());
 
             let mut sorted_langs: Vec<_> = stats.languages.iter().collect();
             sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
 
             for (lang, count) in sorted_langs.iter().take(10) {
-                lines.push(format!("| {} | {} |", lang, fmt_num(**count)));
+                let pct = stats.language_percentages.get(*lang).unwrap_or(&0.0);
+                lines.push(format!("| {} | {} | {}% |", lang, fmt_num(**count), pct));
+            }
+            lines.push(String::new());
+        }
+
+        // File Extensions
+        if !stats.file_extensions.is_empty() {
+            lines.push("## File Types (by extension)".to_string());
+            lines.push(String::new());
+            lines.push("| Extension | Lines | Percentage |".to_string());
+            lines.push("|-----------|-------|------------|".to_string());
+
+            let mut sorted_exts: Vec<_> = stats.file_extensions.iter().collect();
+            sorted_exts.sort_by(|a, b| b.1.cmp(a.1));
+
+            for (ext, count) in sorted_exts.iter().take(15) {
+                let pct = stats.file_extension_percentages.get(*ext).unwrap_or(&0.0);
+                lines.push(format!("| {} | {} | {}% |", ext, fmt_num(**count), pct));
             }
             lines.push(String::new());
         }

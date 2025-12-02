@@ -31,6 +31,7 @@ pub struct RepoStats {
     pub last_commit_date: Option<DateTime<Utc>>,
     pub languages: HashMap<String, u32>,
     pub contribution_types: HashMap<String, u32>,
+    pub file_extensions: HashMap<String, u32>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub commits: Vec<CommitInfo>,
 }
@@ -50,6 +51,7 @@ impl Default for RepoStats {
             last_commit_date: None,
             languages: HashMap::new(),
             contribution_types: HashMap::new(),
+            file_extensions: HashMap::new(),
             commits: Vec::new(),
         }
     }
@@ -78,8 +80,11 @@ pub struct TotalStats {
     pub total_lines_changed: u32,
     pub total_files_changed: u32,
     pub languages: HashMap<String, u32>,
+    pub language_percentages: HashMap<String, f64>,
     pub contribution_types: HashMap<String, u32>,
     pub contribution_percentages: HashMap<String, f64>,
+    pub file_extensions: HashMap<String, u32>,
+    pub file_extension_percentages: HashMap<String, f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +129,7 @@ impl GitAnalyzer {
         let mut current_commit: Option<CommitInfo> = None;
         let mut languages: HashMap<String, u32> = HashMap::new();
         let mut contribution_types: HashMap<String, u32> = HashMap::new();
+        let mut file_extensions: HashMap<String, u32> = HashMap::new();
 
         for line in log_output.lines() {
             let line = line.trim();
@@ -181,6 +187,10 @@ impl GitAnalyzer {
                         .to_string();
                     *contribution_types.entry(type_key).or_insert(0) += added + removed;
 
+                    // Track file extension
+                    let ext = Self::get_file_extension(filepath);
+                    *file_extensions.entry(ext).or_insert(0) += added + removed;
+
                     commit.lines_added += added;
                     commit.lines_removed += removed;
                     commit.files_changed += 1;
@@ -198,6 +208,7 @@ impl GitAnalyzer {
         stats.total_commits = stats.commits.len() as u32;
         stats.languages = languages;
         stats.contribution_types = contribution_types;
+        stats.file_extensions = file_extensions;
 
         for commit in &stats.commits {
             stats.total_lines_added += commit.lines_added;
@@ -213,6 +224,15 @@ impl GitAnalyzer {
 
         self.repos.push(stats.clone());
         stats
+    }
+
+    /// Extract file extension from a path
+    fn get_file_extension(filepath: &str) -> String {
+        let path = std::path::Path::new(filepath);
+        path.extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_else(|| "(no ext)".to_string())
     }
 
     pub fn get_repos(&self) -> &[RepoStats] {
@@ -241,13 +261,41 @@ impl GitAnalyzer {
             }
         }
 
-        // Calculate percentages
+        // Aggregate file extensions
+        let mut all_file_extensions: HashMap<String, u32> = HashMap::new();
+        for repo in &self.repos {
+            for (ext, count) in &repo.file_extensions {
+                *all_file_extensions.entry(ext.clone()).or_insert(0) += count;
+            }
+        }
+
+        // Calculate contribution type percentages
         let total_lines: u32 = all_contribution_types.values().sum();
         let mut contribution_percentages: HashMap<String, f64> = HashMap::new();
         if total_lines > 0 {
             for (ctype, count) in &all_contribution_types {
                 let pct = (*count as f64 / total_lines as f64) * 100.0;
                 contribution_percentages.insert(ctype.clone(), (pct * 10.0).round() / 10.0);
+            }
+        }
+
+        // Calculate language percentages
+        let total_lang_lines: u32 = all_languages.values().sum();
+        let mut language_percentages: HashMap<String, f64> = HashMap::new();
+        if total_lang_lines > 0 {
+            for (lang, count) in &all_languages {
+                let pct = (*count as f64 / total_lang_lines as f64) * 100.0;
+                language_percentages.insert(lang.clone(), (pct * 10.0).round() / 10.0);
+            }
+        }
+
+        // Calculate file extension percentages
+        let total_ext_lines: u32 = all_file_extensions.values().sum();
+        let mut file_extension_percentages: HashMap<String, f64> = HashMap::new();
+        if total_ext_lines > 0 {
+            for (ext, count) in &all_file_extensions {
+                let pct = (*count as f64 / total_ext_lines as f64) * 100.0;
+                file_extension_percentages.insert(ext.clone(), (pct * 10.0).round() / 10.0);
             }
         }
 
@@ -259,8 +307,11 @@ impl GitAnalyzer {
             total_lines_changed: total_lines_added + total_lines_removed,
             total_files_changed,
             languages: all_languages,
+            language_percentages,
             contribution_types: all_contribution_types,
             contribution_percentages,
+            file_extensions: all_file_extensions,
+            file_extension_percentages,
         }
     }
 
