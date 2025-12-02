@@ -1,2 +1,0 @@
-# Git Activity Dashboard - Dependencies
-# No external dependencies required - uses only Python standard library

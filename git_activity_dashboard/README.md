@@ -1,6 +1,6 @@
-# Git Activity Dashboard & Portfolio Generator
+# Git Activity Dashboard
 
-A Python tool to analyze your git contributions across repositories, providing insights and shareable content for professional networking and freelance opportunities.
+A Rust-based tool to analyze git contributions across repositories. Works as both a **CLI tool** and a **WASM module** for JavaScript/TypeScript.
 
 ## Features
 
@@ -9,92 +9,129 @@ A Python tool to analyze your git contributions across repositories, providing i
 - Number of commits (total and per repo)
 - Files changed
 - Languages/technologies used (breakdown by percentage)
-- Most active repositories
 
 ### Contribution Type Breakdown
-- **Production Code**: Core application code (%)
-- **Tests**: Unit tests, integration tests, e2e tests (%)
-- **Documentation**: README, docs/, markdown files (%)
-- **Specs/Configs**: OpenAPI, JSON schemas, CI/CD configs (%)
-- **Infrastructure**: Dockerfiles, Terraform, deployment scripts (%)
-- **Styling**: CSS, SCSS, design-related files (%)
+| Type | Description |
+|------|-------------|
+| **Production Code** | Core application code |
+| **Tests** | Unit, integration, e2e tests |
+| **Documentation** | README, docs, markdown |
+| **Specs & Config** | OpenAPI, JSON schemas, CI/CD |
+| **Infrastructure** | Docker, Terraform, scripts |
+| **Styling** | CSS, SCSS, design files |
 
 ### Time-Based Views
 - Daily activity (last 7 days)
 - Weekly activity (last 4 weeks)
-- Custom date ranges
 
 ### Export Formats
-- **JSON**: Raw data for custom integrations
-- **Markdown**: Full activity report
-- **LinkedIn**: Post-ready summary
-- **Portfolio**: Professional project list for employers/clients
-- **README Badge**: Embeddable widget for GitHub profile
+- **JSON** - Raw data for custom integrations
+- **Markdown** - Full activity report
+- **LinkedIn** - Post-ready summary
+- **Portfolio** - Professional project list for employers
+- **README Badge** - Embeddable widget
 
 ## Installation
 
-No external dependencies required - uses only Python standard library.
+### CLI (Rust)
 
 ```bash
-# Clone or copy the git_activity_dashboard folder to your project
+# Build the CLI
+cd git_activity_dashboard
+cargo build --release --features cli
+
+# The binary will be at target/release/git-activity
 ```
 
-## Usage
+### WASM (for TypeScript/JavaScript)
 
-### Basic Usage
+```bash
+# Install wasm-pack
+cargo install wasm-pack
+
+# Build WASM module
+cd git_activity_dashboard
+wasm-pack build --target web --features wasm
+
+# Or for Node.js
+wasm-pack build --target nodejs --features wasm
+```
+
+## CLI Usage
 
 ```bash
 # Analyze current repository
-python -m git_activity_dashboard
+git-activity
 
 # Analyze specific repositories
-python -m git_activity_dashboard -r ~/projects/repo1 ~/projects/repo2
+git-activity -r ~/projects/repo1 ~/projects/repo2
 
 # Scan a directory for all git repos
-python -m git_activity_dashboard -s ~/projects
+git-activity -s ~/projects
 
 # Filter by your email (useful for shared repos)
-python -m git_activity_dashboard -s ~/projects -e your@email.com
-```
+git-activity -s ~/projects -e your@email.com
 
-### Export Options
-
-```bash
-# Export to JSON
-python -m git_activity_dashboard -s ~/projects --json activity.json
-
-# Export markdown report
-python -m git_activity_dashboard -s ~/projects --markdown report.md
-
-# Export portfolio for employers
-python -m git_activity_dashboard -s ~/projects --portfolio portfolio.md
-
-# Export LinkedIn-ready summary
-python -m git_activity_dashboard -s ~/projects --linkedin linkedin.txt
-
-# Export README badge/widget
-python -m git_activity_dashboard -s ~/projects --badge badge.md
+# Export to different formats
+git-activity -s ~/projects --json activity.json
+git-activity -s ~/projects --markdown report.md
+git-activity -s ~/projects --portfolio portfolio.md
+git-activity -s ~/projects --linkedin linkedin.txt
 
 # Export all formats at once
-python -m git_activity_dashboard -s ~/projects --all-exports ./exports/
+git-activity -s ~/projects --all-exports ./exports/
 ```
 
-### Options
+### CLI Options
 
 | Option | Description |
 |--------|-------------|
-| `-r, --repos` | Specific repository paths to analyze |
-| `-s, --scan` | Scan directory for git repositories |
-| `-d, --depth` | Maximum depth when scanning (default: 3) |
-| `-e, --email` | Filter commits by author email |
-| `-a, --author` | Filter commits by author name |
-| `--json FILE` | Export to JSON file |
-| `--markdown FILE` | Export to Markdown file |
-| `--linkedin FILE` | Export LinkedIn-ready summary |
-| `--portfolio FILE` | Export project portfolio |
-| `--badge FILE` | Export README badge/widget |
-| `--all-exports DIR` | Export all formats to directory |
-| `-q, --quiet` | Suppress console output |
+| `-r, --repos` | Specific repository paths |
+| `-s, --scan` | Scan directory for repos |
+| `-d, --depth` | Max scan depth (default: 3) |
+| `-e, --email` | Filter by author email |
+| `-a, --author` | Filter by author name |
+| `--json FILE` | Export to JSON |
+| `--markdown FILE` | Export to Markdown |
+| `--linkedin FILE` | Export LinkedIn summary |
+| `--portfolio FILE` | Export portfolio |
+| `--badge FILE` | Export README badge |
+| `--all-exports DIR` | Export all formats |
+| `-q, --quiet` | Suppress output |
+
+## TypeScript/JavaScript Usage
+
+```typescript
+import { WasmAnalyzer } from 'git-activity-dashboard';
+import { execSync } from 'child_process';
+
+// Create analyzer
+const analyzer = new WasmAnalyzer('your@email.com', null);
+
+// Get git log from a repo
+const gitLog = execSync(
+  "git log --format='%H|%an|%ae|%aI|%s' --numstat",
+  { cwd: '/path/to/repo', encoding: 'utf-8' }
+);
+
+// Parse the log
+analyzer.parseGitLog('repo-name', '/path/to/repo', gitLog);
+
+// Get stats
+const stats = analyzer.getTotalStats();
+console.log(`Commits: ${stats.total_commits}`);
+console.log(`Test coverage: ${stats.contribution_percentages.tests}%`);
+
+// Get activity
+const weekly = analyzer.getWeeklyActivity(4);
+weekly.forEach(w => console.log(`${w.period_label}: ${w.commits} commits`));
+
+// Export
+const markdown = analyzer.exportMarkdown();
+const linkedin = analyzer.exportLinkedIn();
+const portfolio = analyzer.exportPortfolio();
+const json = analyzer.exportJson();
+```
 
 ## Example Output
 
@@ -120,25 +157,50 @@ CONTRIBUTION BREAKDOWN
   Infrastructure        3.0% █
 ```
 
-### Portfolio Export
+### LinkedIn Export
+```
+🚀 My Developer Activity This Week
 
-The portfolio export generates a professional document listing:
-- All your projects with descriptions
-- Technologies used in each project
-- Your contribution metrics per project
-- Duration of involvement
-- Quality indicators (test coverage, documentation ratio)
+📊 42 commits
+💻 3,456 lines of code
+📁 3 active repos
 
-Perfect for sharing with potential clients or employers!
+Code Quality:
+  ✅ Tests: 18.5%
+  📝 Documentation: 8.3%
+
+🔧 Top Languages: TypeScript, Rust, Python
+
+#coding #developer #programming #softwareengineering
+```
 
 ## Use Cases
 
-1. **Freelancers**: Generate portfolio documents for client pitches
-2. **Job Seekers**: Show code quality practices to potential employers
-3. **Personal Tracking**: Monitor your own productivity and habits
-4. **LinkedIn Content**: Share weekly activity summaries
-5. **GitHub Profile**: Embed activity widgets in your README
+1. **Freelancers** - Generate portfolio documents for client pitches
+2. **Job Seekers** - Show code quality practices to employers
+3. **Personal Tracking** - Monitor productivity and habits
+4. **LinkedIn Content** - Share weekly activity summaries
+5. **GitHub Profile** - Embed activity widgets in README
+
+## Architecture
+
+```
+git_activity_dashboard/
+├── Cargo.toml           # Rust config with cli/wasm features
+├── src/
+│   ├── lib.rs           # Main library + WASM bindings
+│   ├── analyzer.rs      # Git analysis logic
+│   ├── classifier.rs    # File type classification
+│   ├── exporters.rs     # Export formatters
+│   └── bin/
+│       └── cli.rs       # CLI binary
+├── pkg/                 # npm package config
+│   ├── package.json
+│   └── *.d.ts          # TypeScript definitions
+└── typescript/
+    └── example.ts       # Usage example
+```
 
 ## License
 
-MIT License
+MIT
