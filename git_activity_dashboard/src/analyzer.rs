@@ -1,7 +1,33 @@
 use crate::classifier::{FileClassification, FileClassifier};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// Null byte delimiter for git log format - safe from commit message injection
+pub const GIT_LOG_DELIMITER: char = '\x00';
+
+/// Git log format string using null byte delimiter
+/// Use git's %x00 format specifier which outputs actual null bytes
+pub const GIT_LOG_FORMAT: &str = "%H%x00%an%x00%ae%x00%aI%x00%s";
+
+#[derive(Debug, Clone)]
+pub enum ParseError {
+    InvalidCommitFormat(String),
+    InvalidDate(String),
+    EmptyInput,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParseError::InvalidCommitFormat(line) => write!(f, "Invalid commit format: {}", line),
+            ParseError::InvalidDate(date) => write!(f, "Invalid date format: {}", date),
+            ParseError::EmptyInput => write!(f, "Empty git log input"),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CommitInfo {
@@ -21,14 +47,21 @@ pub struct CommitInfo {
 pub struct RepoStats {
     pub name: String,
     pub path: String,
+    #[serde(skip_serializing_if = "String::is_empty", default)]
     pub description: String,
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub technologies: Vec<String>,
     pub total_commits: u32,
     pub total_lines_added: u32,
     pub total_lines_removed: u32,
     pub total_files_changed: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub first_commit_date: Option<DateTime<Utc>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_commit_date: Option<DateTime<Utc>>,
+    /// Last known HEAD commit hash (for incremental updates)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_commit_hash: Option<String>,
     pub languages: HashMap<String, u32>,
     pub contribution_types: HashMap<String, u32>,
     pub file_extensions: HashMap<String, u32>,
@@ -49,11 +82,59 @@ impl Default for RepoStats {
             total_files_changed: 0,
             first_commit_date: None,
             last_commit_date: None,
+            last_commit_hash: None,
             languages: HashMap::new(),
             contribution_types: HashMap::new(),
             file_extensions: HashMap::new(),
             commits: Vec::new(),
         }
+    }
+}
+
+impl RepoStats {
+    /// Merge new stats into existing (for incremental updates)
+    pub fn merge(&mut self, other: &RepoStats) {
+        self.total_commits += other.total_commits;
+        self.total_lines_added += other.total_lines_added;
+        self.total_lines_removed += other.total_lines_removed;
+        self.total_files_changed += other.total_files_changed;
+
+        // Update date range
+        if let Some(other_first) = other.first_commit_date {
+            self.first_commit_date = Some(match self.first_commit_date {
+                Some(self_first) => self_first.min(other_first),
+                None => other_first,
+            });
+        }
+        if let Some(other_last) = other.last_commit_date {
+            self.last_commit_date = Some(match self.last_commit_date {
+                Some(self_last) => self_last.max(other_last),
+                None => other_last,
+            });
+        }
+
+        // Update last commit hash
+        if other.last_commit_hash.is_some() {
+            self.last_commit_hash = other.last_commit_hash.clone();
+        }
+
+        // Merge language counts
+        for (lang, count) in &other.languages {
+            *self.languages.entry(lang.clone()).or_insert(0) += count;
+        }
+
+        // Merge contribution types
+        for (ctype, count) in &other.contribution_types {
+            *self.contribution_types.entry(ctype.clone()).or_insert(0) += count;
+        }
+
+        // Merge file extensions
+        for (ext, count) in &other.file_extensions {
+            *self.file_extensions.entry(ext.clone()).or_insert(0) += count;
+        }
+
+        // Merge commits (if stored)
+        self.commits.extend(other.commits.iter().cloned());
     }
 }
 
@@ -67,7 +148,9 @@ pub struct ActivitySummary {
     pub lines_removed: u32,
     pub files_changed: u32,
     pub repos_active: u32,
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub contribution_breakdown: HashMap<String, u32>,
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
     pub language_breakdown: HashMap<String, u32>,
 }
 
@@ -97,11 +180,24 @@ pub struct DashboardData {
     pub monthly_activity: Vec<ActivitySummary>,
 }
 
+/// Options for parsing git logs
+#[derive(Debug, Clone, Default)]
+pub struct ParseOptions {
+    /// Whether to store individual commits (memory intensive for large repos)
+    pub store_commits: bool,
+    /// Use legacy pipe delimiter (for backwards compatibility)
+    pub legacy_delimiter: bool,
+}
+
 pub struct GitAnalyzer {
     pub author_email: Option<String>,
     pub author_name: Option<String>,
     classifier: FileClassifier,
     repos: Vec<RepoStats>,
+    /// Cached total stats (invalidated on repo changes)
+    cached_stats: Option<TotalStats>,
+    /// Default parse options
+    parse_options: ParseOptions,
 }
 
 impl GitAnalyzer {
@@ -111,16 +207,34 @@ impl GitAnalyzer {
             author_name,
             classifier: FileClassifier::new(),
             repos: Vec::new(),
+            cached_stats: None,
+            parse_options: ParseOptions::default(),
         }
+    }
+
+    pub fn with_options(mut self, options: ParseOptions) -> Self {
+        self.parse_options = options;
+        self
+    }
+
+    /// Set whether to store individual commits
+    pub fn set_store_commits(&mut self, store: bool) {
+        self.parse_options.store_commits = store;
     }
 
     /// Add pre-parsed repository data (used by WASM when git operations happen in JS)
     pub fn add_repo_data(&mut self, stats: RepoStats) {
         self.repos.push(stats);
+        self.cached_stats = None; // Invalidate cache
     }
 
     /// Parse raw git log output and add to repos
-    pub fn parse_git_log(&mut self, repo_name: &str, repo_path: &str, log_output: &str) -> RepoStats {
+    /// Supports both null-byte delimiter (preferred) and legacy pipe delimiter
+    pub fn parse_git_log(&mut self, repo_name: &str, repo_path: &str, log_output: &str) -> Result<RepoStats, ParseError> {
+        if log_output.trim().is_empty() {
+            return Err(ParseError::EmptyInput);
+        }
+
         let mut stats = RepoStats {
             name: repo_name.to_string(),
             path: repo_path.to_string(),
@@ -128,9 +242,15 @@ impl GitAnalyzer {
         };
 
         let mut current_commit: Option<CommitInfo> = None;
-        let mut languages: HashMap<String, u32> = HashMap::new();
-        let mut contribution_types: HashMap<String, u32> = HashMap::new();
-        let mut file_extensions: HashMap<String, u32> = HashMap::new();
+        let mut first_hash: Option<String> = None;
+        let mut parse_errors: Vec<ParseError> = Vec::new();
+
+        // Detect delimiter: if line contains null byte, use that; otherwise use pipe
+        let delimiter = if log_output.contains('\x00') || !self.parse_options.legacy_delimiter {
+            '\x00'
+        } else {
+            '|'
+        };
 
         for line in log_output.lines() {
             let line = line.trim();
@@ -138,30 +258,49 @@ impl GitAnalyzer {
                 continue;
             }
 
-            // Check if this is a commit line (format: hash|author|email|date|message)
-            if line.contains('|') && line.matches('|').count() >= 4 {
-                let parts: Vec<&str> = line.splitn(5, '|').collect();
+            // Check if this is a commit line
+            let is_commit_line = if delimiter == '\x00' {
+                line.contains('\x00')
+            } else {
+                line.contains('|') && line.matches('|').count() >= 4
+            };
+
+            if is_commit_line {
+                let parts: Vec<&str> = line.splitn(5, delimiter).collect();
                 if parts.len() == 5 {
                     // Save previous commit
                     if let Some(commit) = current_commit.take() {
-                        stats.commits.push(commit);
+                        if self.parse_options.store_commits {
+                            stats.commits.push(commit);
+                        }
                     }
 
                     let date = DateTime::parse_from_rfc3339(parts[3])
                         .map(|d| d.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now());
+                        .map_err(|_| ParseError::InvalidDate(parts[3].to_string()));
 
-                    current_commit = Some(CommitInfo {
-                        hash: parts[0].to_string(),
-                        author: parts[1].to_string(),
-                        email: parts[2].to_string(),
-                        date,
-                        message: parts[4].to_string(),
-                        files_changed: 0,
-                        lines_added: 0,
-                        lines_removed: 0,
-                        file_classifications: Vec::new(),
-                    });
+                    match date {
+                        Ok(date) => {
+                            if first_hash.is_none() {
+                                first_hash = Some(parts[0].to_string());
+                            }
+
+                            current_commit = Some(CommitInfo {
+                                hash: parts[0].to_string(),
+                                author: parts[1].to_string(),
+                                email: parts[2].to_string(),
+                                date,
+                                message: parts[4].to_string(),
+                                files_changed: 0,
+                                lines_added: 0,
+                                lines_removed: 0,
+                                file_classifications: Vec::new(),
+                            });
+                        }
+                        Err(e) => {
+                            parse_errors.push(e);
+                        }
+                    }
                     continue;
                 }
             }
@@ -170,6 +309,7 @@ impl GitAnalyzer {
             if let Some(ref mut commit) = current_commit {
                 let parts: Vec<&str> = line.split('\t').collect();
                 if parts.len() == 3 {
+                    // Binary files show "-" for added/removed
                     let added: u32 = parts[0].parse().unwrap_or(0);
                     let removed: u32 = parts[1].parse().unwrap_or(0);
                     let filepath = parts[2];
@@ -178,53 +318,83 @@ impl GitAnalyzer {
 
                     // Track language
                     if let Some(ref lang) = classification.language {
-                        *languages.entry(lang.clone()).or_insert(0) += added + removed;
+                        *stats.languages.entry(lang.clone()).or_insert(0) += added + removed;
                     }
 
                     // Track contribution type
-                    let type_key = serde_json::to_string(&classification.contribution_type)
-                        .unwrap_or_else(|_| "\"other\"".to_string())
-                        .trim_matches('"')
-                        .to_string();
-                    *contribution_types.entry(type_key).or_insert(0) += added + removed;
+                    let type_key = format!("{:?}", classification.contribution_type).to_lowercase();
+                    *stats.contribution_types.entry(type_key).or_insert(0) += added + removed;
 
                     // Track file extension
                     let ext = Self::get_file_extension(filepath);
-                    *file_extensions.entry(ext).or_insert(0) += added + removed;
+                    *stats.file_extensions.entry(ext).or_insert(0) += added + removed;
 
                     commit.lines_added += added;
                     commit.lines_removed += removed;
                     commit.files_changed += 1;
-                    commit.file_classifications.push(classification);
+
+                    // Update totals inline (avoid second iteration)
+                    stats.total_lines_added += added;
+                    stats.total_lines_removed += removed;
+                    stats.total_files_changed += 1;
+
+                    if self.parse_options.store_commits {
+                        commit.file_classifications.push(classification);
+                    }
                 }
             }
         }
 
         // Don't forget the last commit
         if let Some(commit) = current_commit {
-            stats.commits.push(commit);
+            // Update date range from last commit
+            if stats.first_commit_date.is_none() || commit.date < stats.first_commit_date.unwrap() {
+                stats.first_commit_date = Some(commit.date);
+            }
+            if stats.last_commit_date.is_none() || commit.date > stats.last_commit_date.unwrap() {
+                stats.last_commit_date = Some(commit.date);
+            }
+
+            stats.total_commits += 1;
+
+            if self.parse_options.store_commits {
+                stats.commits.push(commit);
+            }
         }
 
-        // Calculate totals
-        stats.total_commits = stats.commits.len() as u32;
-        stats.languages = languages;
-        stats.contribution_types = contribution_types;
-        stats.file_extensions = file_extensions;
+        // Count commits we processed
+        stats.total_commits = if self.parse_options.store_commits {
+            stats.commits.len() as u32
+        } else {
+            // Count from first_hash presence
+            log_output.lines()
+                .filter(|l| l.contains(delimiter) || (delimiter == '|' && l.matches('|').count() >= 4))
+                .count() as u32
+        };
 
-        for commit in &stats.commits {
-            stats.total_lines_added += commit.lines_added;
-            stats.total_lines_removed += commit.lines_removed;
-            stats.total_files_changed += commit.files_changed;
-        }
-
-        if !stats.commits.is_empty() {
+        // Update date range from stored commits if available
+        if self.parse_options.store_commits && !stats.commits.is_empty() {
             let dates: Vec<_> = stats.commits.iter().map(|c| c.date).collect();
             stats.first_commit_date = dates.iter().min().copied();
             stats.last_commit_date = dates.iter().max().copied();
         }
 
+        // Store the latest commit hash for incremental updates
+        stats.last_commit_hash = first_hash;
+
         self.repos.push(stats.clone());
-        stats
+        self.cached_stats = None; // Invalidate cache
+
+        Ok(stats)
+    }
+
+    /// Parse git log with legacy pipe delimiter (backwards compatibility)
+    pub fn parse_git_log_legacy(&mut self, repo_name: &str, repo_path: &str, log_output: &str) -> Result<RepoStats, ParseError> {
+        let old_legacy = self.parse_options.legacy_delimiter;
+        self.parse_options.legacy_delimiter = true;
+        let result = self.parse_git_log(repo_name, repo_path, log_output);
+        self.parse_options.legacy_delimiter = old_legacy;
+        result
     }
 
     /// Extract file extension from a path
@@ -240,65 +410,60 @@ impl GitAnalyzer {
         &self.repos
     }
 
+    /// Get a mutable reference to repos (for incremental updates)
+    pub fn get_repos_mut(&mut self) -> &mut Vec<RepoStats> {
+        self.cached_stats = None;
+        &mut self.repos
+    }
+
+    /// Find a repo by name
+    pub fn find_repo(&self, name: &str) -> Option<&RepoStats> {
+        self.repos.iter().find(|r| r.name == name)
+    }
+
+    /// Find a repo by name (mutable)
+    pub fn find_repo_mut(&mut self, name: &str) -> Option<&mut RepoStats> {
+        self.cached_stats = None;
+        self.repos.iter_mut().find(|r| r.name == name)
+    }
+
     pub fn get_total_stats(&self) -> TotalStats {
+        // Return cached stats if available
+        if let Some(ref cached) = self.cached_stats {
+            return cached.clone();
+        }
+
+        self.compute_total_stats()
+    }
+
+    fn compute_total_stats(&self) -> TotalStats {
         let total_commits: u32 = self.repos.iter().map(|r| r.total_commits).sum();
         let total_lines_added: u32 = self.repos.iter().map(|r| r.total_lines_added).sum();
         let total_lines_removed: u32 = self.repos.iter().map(|r| r.total_lines_removed).sum();
         let total_files_changed: u32 = self.repos.iter().map(|r| r.total_files_changed).sum();
 
-        // Aggregate languages
-        let mut all_languages: HashMap<String, u32> = HashMap::new();
+        // Pre-allocate with estimated capacity
+        let est_capacity = self.repos.len() * 5;
+        let mut all_languages: HashMap<String, u32> = HashMap::with_capacity(est_capacity);
+        let mut all_contribution_types: HashMap<String, u32> = HashMap::with_capacity(8);
+        let mut all_file_extensions: HashMap<String, u32> = HashMap::with_capacity(est_capacity);
+
         for repo in &self.repos {
             for (lang, count) in &repo.languages {
                 *all_languages.entry(lang.clone()).or_insert(0) += count;
             }
-        }
-
-        // Aggregate contribution types
-        let mut all_contribution_types: HashMap<String, u32> = HashMap::new();
-        for repo in &self.repos {
             for (ctype, count) in &repo.contribution_types {
                 *all_contribution_types.entry(ctype.clone()).or_insert(0) += count;
             }
-        }
-
-        // Aggregate file extensions
-        let mut all_file_extensions: HashMap<String, u32> = HashMap::new();
-        for repo in &self.repos {
             for (ext, count) in &repo.file_extensions {
                 *all_file_extensions.entry(ext.clone()).or_insert(0) += count;
             }
         }
 
-        // Calculate contribution type percentages
-        let total_lines: u32 = all_contribution_types.values().sum();
-        let mut contribution_percentages: HashMap<String, f64> = HashMap::new();
-        if total_lines > 0 {
-            for (ctype, count) in &all_contribution_types {
-                let pct = (*count as f64 / total_lines as f64) * 100.0;
-                contribution_percentages.insert(ctype.clone(), (pct * 10.0).round() / 10.0);
-            }
-        }
-
-        // Calculate language percentages
-        let total_lang_lines: u32 = all_languages.values().sum();
-        let mut language_percentages: HashMap<String, f64> = HashMap::new();
-        if total_lang_lines > 0 {
-            for (lang, count) in &all_languages {
-                let pct = (*count as f64 / total_lang_lines as f64) * 100.0;
-                language_percentages.insert(lang.clone(), (pct * 10.0).round() / 10.0);
-            }
-        }
-
-        // Calculate file extension percentages
-        let total_ext_lines: u32 = all_file_extensions.values().sum();
-        let mut file_extension_percentages: HashMap<String, f64> = HashMap::new();
-        if total_ext_lines > 0 {
-            for (ext, count) in &all_file_extensions {
-                let pct = (*count as f64 / total_ext_lines as f64) * 100.0;
-                file_extension_percentages.insert(ext.clone(), (pct * 10.0).round() / 10.0);
-            }
-        }
+        // Calculate percentages
+        let contribution_percentages = Self::calculate_percentages(&all_contribution_types);
+        let language_percentages = Self::calculate_percentages(&all_languages);
+        let file_extension_percentages = Self::calculate_percentages(&all_file_extensions);
 
         TotalStats {
             total_repos: self.repos.len() as u32,
@@ -316,9 +481,29 @@ impl GitAnalyzer {
         }
     }
 
+    fn calculate_percentages(map: &HashMap<String, u32>) -> HashMap<String, f64> {
+        let total: u32 = map.values().sum();
+        if total == 0 {
+            return HashMap::new();
+        }
+
+        map.iter()
+            .map(|(k, v)| {
+                let pct = (*v as f64 / total as f64) * 100.0;
+                (k.clone(), (pct * 10.0).round() / 10.0)
+            })
+            .collect()
+    }
+
+    /// Cache the total stats (call after all repos are added)
+    pub fn cache_stats(&mut self) {
+        self.cached_stats = Some(self.compute_total_stats());
+    }
+
     pub fn get_daily_activity(&self, days: u32) -> Vec<ActivitySummary> {
         let now = Utc::now();
-        let mut summaries = Vec::new();
+        let mut summaries = Vec::with_capacity(days as usize);
+        let mut active_repos: HashSet<&String> = HashSet::new();
 
         for i in 0..days {
             let day = now - Duration::days(i as i64);
@@ -338,7 +523,7 @@ impl GitAnalyzer {
                 language_breakdown: HashMap::new(),
             };
 
-            let mut active_repos = std::collections::HashSet::new();
+            active_repos.clear();
 
             for repo in &self.repos {
                 for commit in &repo.commits {
@@ -361,7 +546,8 @@ impl GitAnalyzer {
 
     pub fn get_weekly_activity(&self, weeks: u32) -> Vec<ActivitySummary> {
         let now = Utc::now();
-        let mut summaries = Vec::new();
+        let mut summaries = Vec::with_capacity(weeks as usize);
+        let mut active_repos: HashSet<&String> = HashSet::new();
 
         for i in 0..weeks {
             let week_start = now - Duration::days((now.weekday().num_days_from_monday() + i * 7) as i64);
@@ -381,7 +567,7 @@ impl GitAnalyzer {
                 language_breakdown: HashMap::new(),
             };
 
-            let mut active_repos = std::collections::HashSet::new();
+            active_repos.clear();
 
             for repo in &self.repos {
                 for commit in &repo.commits {
@@ -404,10 +590,10 @@ impl GitAnalyzer {
 
     pub fn get_monthly_activity(&self, months: u32) -> Vec<ActivitySummary> {
         let now = Utc::now();
-        let mut summaries = Vec::new();
+        let mut summaries = Vec::with_capacity(months as usize);
+        let mut active_repos: HashSet<&String> = HashSet::new();
 
         for i in 0..months {
-            // Calculate month start
             let mut year = now.year();
             let mut month = now.month() as i32 - i as i32;
 
@@ -423,7 +609,6 @@ impl GitAnalyzer {
                 .unwrap()
                 .and_utc();
 
-            // Calculate month end
             let next_month = if month == 12 { 1 } else { month + 1 };
             let next_year = if month == 12 { year + 1 } else { year };
             let end = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
@@ -447,7 +632,7 @@ impl GitAnalyzer {
                 language_breakdown: HashMap::new(),
             };
 
-            let mut active_repos = std::collections::HashSet::new();
+            active_repos.clear();
 
             for repo in &self.repos {
                 for commit in &repo.commits {
@@ -478,4 +663,16 @@ impl GitAnalyzer {
             monthly_activity: self.get_monthly_activity(6),
         }
     }
+}
+
+/// Returns the recommended git log command for a repo
+pub fn git_log_command(since_hash: Option<&str>) -> String {
+    let range = match since_hash {
+        Some(hash) => format!("{}..HEAD", hash),
+        None => String::new(),
+    };
+    format!(
+        "git log {} --format='{}' --numstat",
+        range, GIT_LOG_FORMAT
+    )
 }

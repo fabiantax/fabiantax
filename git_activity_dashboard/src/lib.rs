@@ -2,7 +2,10 @@ pub mod analyzer;
 pub mod classifier;
 pub mod exporters;
 
-pub use analyzer::{GitAnalyzer, RepoStats, CommitInfo, TotalStats, DashboardData, ActivitySummary};
+pub use analyzer::{
+    GitAnalyzer, RepoStats, CommitInfo, TotalStats, DashboardData, ActivitySummary,
+    ParseOptions, ParseError, GIT_LOG_FORMAT, GIT_LOG_DELIMITER, git_log_command,
+};
 pub use classifier::{FileClassifier, FileClassification, ContributionType};
 pub use exporters::{MarkdownExporter, LinkedInExporter, PortfolioExporter, BadgeExporter};
 
@@ -37,11 +40,15 @@ pub mod wasm {
         /// Parse git log output from a repository
         ///
         /// The git log should be formatted as:
-        /// git log --format='%H|%an|%ae|%aI|%s' --numstat
+        /// git log --format='%H\x00%an\x00%ae\x00%aI\x00%s' --numstat
+        /// (using null byte \x00 as delimiter for safety)
         #[wasm_bindgen(js_name = parseGitLog)]
-        pub fn parse_git_log(&mut self, repo_name: &str, repo_path: &str, log_output: &str) -> JsValue {
-            let stats = self.inner.parse_git_log(repo_name, repo_path, log_output);
-            serde_wasm_bindgen::to_value(&stats).unwrap_or(JsValue::NULL)
+        pub fn parse_git_log(&mut self, repo_name: &str, repo_path: &str, log_output: &str) -> Result<JsValue, JsValue> {
+            match self.inner.parse_git_log(repo_name, repo_path, log_output) {
+                Ok(stats) => serde_wasm_bindgen::to_value(&stats)
+                    .map_err(|e| JsValue::from_str(&e.to_string())),
+                Err(e) => Err(JsValue::from_str(&e.to_string())),
+            }
         }
 
         /// Add pre-parsed repository data

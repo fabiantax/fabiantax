@@ -1,6 +1,7 @@
 use clap::Parser;
 use git_activity_dashboard::{
     GitAnalyzer, BadgeExporter, LinkedInExporter, MarkdownExporter, PortfolioExporter,
+    ParseOptions, GIT_LOG_FORMAT,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -94,7 +95,7 @@ fn get_git_log(repo_path: &Path, author_email: &Option<String>, author_name: &Op
     let mut cmd = Command::new("git");
     cmd.current_dir(repo_path)
         .arg("log")
-        .arg("--format=%H|%an|%ae|%aI|%s")
+        .arg(format!("--format={}", GIT_LOG_FORMAT))
         .arg("--numstat");
 
     if let Some(email) = author_email {
@@ -280,8 +281,13 @@ fn main() {
         }
     };
 
-    // Create analyzer
-    let mut analyzer = GitAnalyzer::new(cli.email.clone(), cli.author.clone());
+    // Create analyzer with options
+    let parse_options = ParseOptions {
+        store_commits: true,  // Need commits for activity views
+        legacy_delimiter: false,
+    };
+    let mut analyzer = GitAnalyzer::new(cli.email.clone(), cli.author.clone())
+        .with_options(parse_options);
 
     // Analyze repos
     for path in &repo_paths {
@@ -294,9 +300,20 @@ fn main() {
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
                 .to_string();
-            analyzer.parse_git_log(&repo_name, &path.to_string_lossy(), &log_output);
+
+            match analyzer.parse_git_log(&repo_name, &path.to_string_lossy(), &log_output) {
+                Ok(_) => {},
+                Err(e) => {
+                    if !cli.quiet {
+                        eprintln!("Warning: Failed to parse {}: {}", repo_name, e);
+                    }
+                }
+            }
         }
     }
+
+    // Cache stats for better performance
+    analyzer.cache_stats();
 
     if analyzer.get_repos().is_empty() {
         eprintln!("No repositories were successfully analyzed.");
