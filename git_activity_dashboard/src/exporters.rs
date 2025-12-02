@@ -1,5 +1,18 @@
-use crate::analyzer::{GitAnalyzer, TotalStats};
+use crate::analyzer::GitAnalyzer;
 use chrono::Utc;
+
+/// Format number with thousands separator
+fn fmt_num(n: u32) -> String {
+    let s = n.to_string();
+    let mut result = String::new();
+    for (i, c) in s.chars().rev().enumerate() {
+        if i > 0 && i % 3 == 0 {
+            result.insert(0, ',');
+        }
+        result.insert(0, c);
+    }
+    result
+}
 
 pub struct MarkdownExporter;
 
@@ -19,10 +32,10 @@ impl MarkdownExporter {
         lines.push("| Metric | Value |".to_string());
         lines.push("|--------|-------|".to_string());
         lines.push(format!("| Repositories | {} |", stats.total_repos));
-        lines.push(format!("| Total Commits | {:,} |", stats.total_commits));
-        lines.push(format!("| Lines Added | {:,} |", stats.total_lines_added));
-        lines.push(format!("| Lines Removed | {:,} |", stats.total_lines_removed));
-        lines.push(format!("| Files Changed | {:,} |", stats.total_files_changed));
+        lines.push(format!("| Total Commits | {} |", fmt_num(stats.total_commits)));
+        lines.push(format!("| Lines Added | {} |", fmt_num(stats.total_lines_added)));
+        lines.push(format!("| Lines Removed | {} |", fmt_num(stats.total_lines_removed)));
+        lines.push(format!("| Files Changed | {} |", fmt_num(stats.total_files_changed)));
         lines.push(String::new());
 
         // Contribution breakdown
@@ -37,7 +50,7 @@ impl MarkdownExporter {
         for (ctype, count) in sorted_types {
             let pct = stats.contribution_percentages.get(ctype).unwrap_or(&0.0);
             let label = Self::type_label(ctype);
-            lines.push(format!("| {} | {:,} | {}% |", label, count, pct));
+            lines.push(format!("| {} | {} | {}% |", label, fmt_num(*count), pct));
         }
         lines.push(String::new());
 
@@ -52,7 +65,7 @@ impl MarkdownExporter {
             sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
 
             for (lang, count) in sorted_langs.iter().take(10) {
-                lines.push(format!("| {} | {:,} |", lang, count));
+                lines.push(format!("| {} | {} |", lang, fmt_num(**count)));
             }
             lines.push(String::new());
         }
@@ -65,7 +78,7 @@ impl MarkdownExporter {
         lines.push("|------|---------|---------------|".to_string());
         for week in weekly {
             let total_lines = week.lines_added + week.lines_removed;
-            lines.push(format!("| {} | {} | {:,} |", week.period_label, week.commits, total_lines));
+            lines.push(format!("| {} | {} | {} |", week.period_label, week.commits, fmt_num(total_lines)));
         }
         lines.push(String::new());
 
@@ -88,7 +101,7 @@ impl MarkdownExporter {
                 lines.push(String::new());
             }
             lines.push(format!("- Commits: {}", repo.total_commits));
-            lines.push(format!("- Lines: +{:,} / -{:,}", repo.total_lines_added, repo.total_lines_removed));
+            lines.push(format!("- Lines: +{} / -{}", fmt_num(repo.total_lines_added), fmt_num(repo.total_lines_removed)));
             if let (Some(first), Some(last)) = (repo.first_commit_date, repo.last_commit_date) {
                 lines.push(format!("- Active: {} to {}", first.format("%Y-%m-%d"), last.format("%Y-%m-%d")));
             }
@@ -121,14 +134,14 @@ impl LinkedInExporter {
 
         let mut lines = Vec::new();
 
-        lines.push("🚀 My Developer Activity This Week".to_string());
+        lines.push("My Developer Activity This Week".to_string());
         lines.push(String::new());
 
         if let Some(week) = current_week {
             if week.commits > 0 {
-                lines.push(format!("📊 {} commits", week.commits));
-                lines.push(format!("💻 {:,} lines of code", week.lines_added + week.lines_removed));
-                lines.push(format!("📁 {} active repos", week.repos_active));
+                lines.push(format!("{} commits", week.commits));
+                lines.push(format!("{} lines of code", fmt_num(week.lines_added + week.lines_removed)));
+                lines.push(format!("{} active repos", week.repos_active));
                 lines.push(String::new());
             }
         }
@@ -137,12 +150,12 @@ impl LinkedInExporter {
         let mut quality_metrics = Vec::new();
         if let Some(test_pct) = stats.contribution_percentages.get("tests") {
             if *test_pct > 0.0 {
-                quality_metrics.push(format!("✅ Tests: {}%", test_pct));
+                quality_metrics.push(format!("Tests: {}%", test_pct));
             }
         }
         if let Some(doc_pct) = stats.contribution_percentages.get("documentation") {
             if *doc_pct > 0.0 {
-                quality_metrics.push(format!("📝 Documentation: {}%", doc_pct));
+                quality_metrics.push(format!("Documentation: {}%", doc_pct));
             }
         }
 
@@ -159,7 +172,7 @@ impl LinkedInExporter {
             let mut sorted_langs: Vec<_> = stats.languages.iter().collect();
             sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
             let top_langs: Vec<_> = sorted_langs.iter().take(3).map(|(l, _)| l.as_str()).collect();
-            lines.push(format!("🔧 Top Languages: {}", top_langs.join(", ")));
+            lines.push(format!("Top Languages: {}", top_langs.join(", ")));
             lines.push(String::new());
         }
 
@@ -185,8 +198,8 @@ impl PortfolioExporter {
         lines.push("## Summary".to_string());
         lines.push(String::new());
         lines.push(format!("- **Total Projects:** {}", stats.total_repos));
-        lines.push(format!("- **Total Commits:** {:,}", stats.total_commits));
-        lines.push(format!("- **Total Lines of Code:** {:,}", stats.total_lines_added));
+        lines.push(format!("- **Total Commits:** {}", fmt_num(stats.total_commits)));
+        lines.push(format!("- **Total Lines of Code:** {}", fmt_num(stats.total_lines_added)));
         lines.push(String::new());
 
         // Skills
@@ -200,7 +213,8 @@ impl PortfolioExporter {
 
             for (lang, count) in sorted_langs.iter().take(10) {
                 let pct = (**count as f64 / total as f64) * 100.0;
-                let bar = "█".repeat((pct / 5.0) as usize);
+                let bar_len = (pct / 5.0) as usize;
+                let bar: String = (0..bar_len).map(|_| '#').collect();
                 lines.push(format!("- **{}**: {:.1}% {}", lang, pct, bar));
             }
             lines.push(String::new());
@@ -246,7 +260,7 @@ impl PortfolioExporter {
 
             lines.push("**My Contribution:**".to_string());
             lines.push(format!("- {} commits", repo.total_commits));
-            lines.push(format!("- {:,} lines added, {:,} lines removed", repo.total_lines_added, repo.total_lines_removed));
+            lines.push(format!("- {} lines added, {} lines removed", fmt_num(repo.total_lines_added), fmt_num(repo.total_lines_removed)));
 
             if let (Some(first), Some(last)) = (repo.first_commit_date, repo.last_commit_date) {
                 let duration = (last - first).num_days();
@@ -286,7 +300,7 @@ impl BadgeExporter {
         lines.push("<!-- Git Activity Dashboard Widget -->".to_string());
         lines.push("<div align=\"center\">".to_string());
         lines.push(String::new());
-        lines.push("### 📊 Developer Activity".to_string());
+        lines.push("### Developer Activity".to_string());
         lines.push(String::new());
         lines.push("| Metric | All Time | This Week |".to_string());
         lines.push("|--------|----------|-----------|".to_string());
@@ -297,8 +311,8 @@ impl BadgeExporter {
             (0, 0, 0)
         };
 
-        lines.push(format!("| Commits | {:,} | {} |", stats.total_commits, week_commits));
-        lines.push(format!("| Lines Changed | {:,} | {:,} |", stats.total_lines_changed, week_lines));
+        lines.push(format!("| Commits | {} | {} |", fmt_num(stats.total_commits), week_commits));
+        lines.push(format!("| Lines Changed | {} | {} |", fmt_num(stats.total_lines_changed), fmt_num(week_lines)));
         lines.push(format!("| Repositories | {} | {} |", stats.total_repos, week_repos));
         lines.push(String::new());
 

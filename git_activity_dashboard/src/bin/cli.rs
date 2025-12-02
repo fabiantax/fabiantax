@@ -1,5 +1,4 @@
-#[cfg(feature = "cli")]
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use git_activity_dashboard::{
     GitAnalyzer, BadgeExporter, LinkedInExporter, MarkdownExporter, PortfolioExporter,
 };
@@ -120,10 +119,10 @@ fn print_summary(analyzer: &GitAnalyzer) {
     println!("{}", "=".repeat(60));
 
     println!("\nRepositories analyzed: {}", stats.total_repos);
-    println!("Total commits: {:,}", stats.total_commits);
-    println!("Lines added: {:,}", stats.total_lines_added);
-    println!("Lines removed: {:,}", stats.total_lines_removed);
-    println!("Files changed: {:,}", stats.total_files_changed);
+    println!("Total commits: {}", stats.total_commits);
+    println!("Lines added: {}", stats.total_lines_added);
+    println!("Lines removed: {}", stats.total_lines_removed);
+    println!("Files changed: {}", stats.total_files_changed);
 
     println!("\n{}", "-".repeat(40));
     println!("CONTRIBUTION BREAKDOWN");

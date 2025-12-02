@@ -1,5 +1,5 @@
-use crate::classifier::{ContributionType, FileClassification, FileClassifier};
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use crate::classifier::{FileClassification, FileClassifier};
+use chrono::{DateTime, Datelike, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
