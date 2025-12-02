@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git Activity Constellation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        #cosmos-container {
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        .overlay {
+            position: absolute;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .stats-panel {
+            top: 20px;
+            left: 20px;
+            background: rgba(10, 10, 20, 0.85);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 20px;
+            min-width: 280px;
+            backdrop-filter: blur(10px);
+            pointer-events: auto;
+        }
+
+        .stats-panel h1 {
+            font-size: 1.2rem;
+            color: #7dd3fc;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .stats-panel h1::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            background: #7dd3fc;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #222;
+        }
+
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            color: #888;
+            font-size: 0.85rem;
+        }
+
+        .stat-value {
+            color: #fff;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .legend {
+            bottom: 20px;
+            left: 20px;
+            background: rgba(10, 10, 20, 0.85);
+            border: 1px solid #333;
+            border-radius: 12px;
+            padding: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .legend h3 {
+            font-size: 0.8rem;
+            color: #666;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 6px 0;
+            font-size: 0.8rem;
+        }
+
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+
+        .hover-info {
+            top: 20px;
+            right: 20px;
+            background: rgba(10, 10, 20, 0.9);
+            border: 1px solid #444;
+            border-radius: 12px;
+            padding: 15px;
+            min-width: 200px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            backdrop-filter: blur(10px);
+        }
+
+        .hover-info.visible {
+            opacity: 1;
+        }
+
+        .hover-info h4 {
+            color: #7dd3fc;
+            margin-bottom: 8px;
+        }
+
+        .input-panel {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(10, 10, 20, 0.95);
+            border: 1px solid #333;
+            border-radius: 16px;
+            padding: 30px;
+            min-width: 400px;
+            z-index: 100;
+            pointer-events: auto;
+        }
+
+        .input-panel h2 {
+            color: #7dd3fc;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+
+        .input-panel textarea {
+            width: 100%;
+            height: 200px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: 'SF Mono', monospace;
+            font-size: 0.85rem;
+            padding: 12px;
+            resize: vertical;
+        }
+
+        .input-panel button {
+            width: 100%;
+            margin-top: 15px;
+            padding: 12px;
+            background: linear-gradient(135deg, #7dd3fc, #38bdf8);
+            border: none;
+            border-radius: 8px;
+            color: #0a0a0f;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .input-panel button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(125, 211, 252, 0.3);
+        }
+
+        .input-panel .hint {
+            color: #666;
+            font-size: 0.75rem;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 50;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #333;
+            border-top-color: #7dd3fc;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="cosmos-container">
+        <canvas id="cosmos-canvas"></canvas>
+
+        <div class="overlay stats-panel hidden" id="stats-panel">
+            <h1>Git Constellation</h1>
+            <div class="stat-row">
+                <span class="stat-label">Repositories</span>
+                <span class="stat-value" id="stat-repos">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Total Commits</span>
+                <span class="stat-value" id="stat-commits">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Lines Changed</span>
+                <span class="stat-value" id="stat-lines">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">Languages</span>
+                <span class="stat-value" id="stat-langs">0</span>
+            </div>
+            <div class="stat-row">
+                <span class="stat-label">File Types</span>
+                <span class="stat-value" id="stat-types">0</span>
+            </div>
+        </div>
+
+        <div class="overlay legend hidden" id="legend">
+            <h3>Node Types</h3>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #f472b6;"></div>
+                <span>Repository</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #7dd3fc;"></div>
+                <span>Language</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #a78bfa;"></div>
+                <span>Contribution Type</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background: #34d399;"></div>
+                <span>File Extension</span>
+            </div>
+        </div>
+
+        <div class="overlay hover-info" id="hover-info">
+            <h4 id="hover-name">Node</h4>
+            <div id="hover-details"></div>
+        </div>
+
+        <div class="input-panel" id="input-panel">
+            <h2>Visualize Your Git Activity</h2>
+            <textarea id="git-data" placeholder="Paste your git activity JSON here, or run:&#10;&#10;git-activity -r /path/to/repo --json output.json&#10;&#10;Then paste the contents of output.json"></textarea>
+            <button onclick="loadData()">Launch Constellation</button>
+            <p class="hint">Or drag & drop a JSON file</p>
+        </div>
+
+        <div class="loading hidden" id="loading">
+            <div class="loading-spinner"></div>
+            <p>Building constellation...</p>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/@cosmograph/cosmos@2.0.0/dist/index.min.js"></script>
+    <script src="constellation.js"></script>
+</body>
+</html>
