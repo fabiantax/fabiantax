@@ -1,1 +1,0 @@
-/home/user/fabiantax/git_activity_dashboard/target/release/git-activity: /home/user/fabiantax/git_activity_dashboard/src/analyzer.rs /home/user/fabiantax/git_activity_dashboard/src/bin/cli.rs /home/user/fabiantax/git_activity_dashboard/src/classifier.rs /home/user/fabiantax/git_activity_dashboard/src/exporters.rs /home/user/fabiantax/git_activity_dashboard/src/lib.rs
