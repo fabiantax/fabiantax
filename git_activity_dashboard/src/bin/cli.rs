@@ -192,21 +192,56 @@ fn print_summary(analyzer: &GitAnalyzer) {
         }
     }
 
-    // Repository list
+    // Monthly activity
+    let monthly = analyzer.get_monthly_activity(6);
+    if !monthly.is_empty() {
+        println!("\n{}", "-".repeat(40));
+        println!("MONTHLY ACTIVITY");
+        println!("{}", "-".repeat(40));
+
+        for month in monthly {
+            let total_lines = month.lines_added + month.lines_removed;
+            let bar = "█".repeat((month.commits as usize / 5).min(20));
+            println!("  {:20} {:4} commits  {:7} lines  {}",
+                month.period_label, month.commits, total_lines, bar);
+        }
+    }
+
+    // Repository list with detailed breakdown
     println!("\n{}", "-".repeat(40));
-    println!("REPOSITORIES");
+    println!("REPOSITORIES (per-repo breakdown)");
     println!("{}", "-".repeat(40));
 
     let mut repos: Vec<_> = analyzer.get_repos().to_vec();
     repos.sort_by(|a, b| b.total_commits.cmp(&a.total_commits));
 
     for repo in repos.iter().take(10) {
-        let techs = if repo.technologies.is_empty() {
-            "N/A".to_string()
-        } else {
-            repo.technologies.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
-        };
-        println!("  {:30} {:4} commits  [{}]", repo.name, repo.total_commits, techs);
+        println!("\n  {} ({} commits)", repo.name, repo.total_commits);
+        println!("    Lines: +{} / -{}", repo.total_lines_added, repo.total_lines_removed);
+
+        // Top languages for this repo
+        if !repo.languages.is_empty() {
+            let mut langs: Vec<_> = repo.languages.iter().collect();
+            langs.sort_by(|a, b| b.1.cmp(a.1));
+            let top_langs: Vec<_> = langs.iter().take(3).map(|(l, _)| l.as_str()).collect();
+            println!("    Languages: {}", top_langs.join(", "));
+        }
+
+        // Top contribution types for this repo
+        if !repo.contribution_types.is_empty() {
+            let mut types: Vec<_> = repo.contribution_types.iter().collect();
+            types.sort_by(|a, b| b.1.cmp(a.1));
+            let top_types: Vec<_> = types.iter().take(3).map(|(t, _)| t.as_str()).collect();
+            println!("    Focus: {}", top_types.join(", "));
+        }
+
+        // Top file extensions for this repo
+        if !repo.file_extensions.is_empty() {
+            let mut exts: Vec<_> = repo.file_extensions.iter().collect();
+            exts.sort_by(|a, b| b.1.cmp(a.1));
+            let top_exts: Vec<_> = exts.iter().take(4).map(|(e, _)| e.as_str()).collect();
+            println!("    File types: {}", top_exts.join(", "));
+        }
     }
 
     println!("\n{}\n", "=".repeat(60));

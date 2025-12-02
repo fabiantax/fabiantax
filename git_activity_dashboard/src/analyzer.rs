@@ -94,6 +94,7 @@ pub struct DashboardData {
     pub repositories: Vec<RepoStats>,
     pub daily_activity: Vec<ActivitySummary>,
     pub weekly_activity: Vec<ActivitySummary>,
+    pub monthly_activity: Vec<ActivitySummary>,
 }
 
 pub struct GitAnalyzer {
@@ -401,6 +402,72 @@ impl GitAnalyzer {
         summaries
     }
 
+    pub fn get_monthly_activity(&self, months: u32) -> Vec<ActivitySummary> {
+        let now = Utc::now();
+        let mut summaries = Vec::new();
+
+        for i in 0..months {
+            // Calculate month start
+            let mut year = now.year();
+            let mut month = now.month() as i32 - i as i32;
+
+            while month <= 0 {
+                month += 12;
+                year -= 1;
+            }
+
+            let month = month as u32;
+            let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc();
+
+            // Calculate month end
+            let next_month = if month == 12 { 1 } else { month + 1 };
+            let next_year = if month == 12 { year + 1 } else { year };
+            let end = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
+                .unwrap()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc() - Duration::seconds(1);
+
+            let month_name = start.format("%B %Y").to_string();
+
+            let mut summary = ActivitySummary {
+                period_start: start,
+                period_end: end,
+                period_label: month_name,
+                commits: 0,
+                lines_added: 0,
+                lines_removed: 0,
+                files_changed: 0,
+                repos_active: 0,
+                contribution_breakdown: HashMap::new(),
+                language_breakdown: HashMap::new(),
+            };
+
+            let mut active_repos = std::collections::HashSet::new();
+
+            for repo in &self.repos {
+                for commit in &repo.commits {
+                    if commit.date >= start && commit.date <= end {
+                        summary.commits += 1;
+                        summary.lines_added += commit.lines_added;
+                        summary.lines_removed += commit.lines_removed;
+                        summary.files_changed += commit.files_changed;
+                        active_repos.insert(&repo.name);
+                    }
+                }
+            }
+
+            summary.repos_active = active_repos.len() as u32;
+            summaries.push(summary);
+        }
+
+        summaries
+    }
+
     pub fn get_dashboard_data(&self) -> DashboardData {
         DashboardData {
             generated_at: Utc::now(),
@@ -408,6 +475,7 @@ impl GitAnalyzer {
             repositories: self.repos.clone(),
             daily_activity: self.get_daily_activity(7),
             weekly_activity: self.get_weekly_activity(4),
+            monthly_activity: self.get_monthly_activity(6),
         }
     }
 }

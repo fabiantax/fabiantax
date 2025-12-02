@@ -92,16 +92,28 @@ impl MarkdownExporter {
         lines.push("## Weekly Activity".to_string());
         lines.push(String::new());
         let weekly = analyzer.get_weekly_activity(4);
-        lines.push("| Week | Commits | Lines Changed |".to_string());
-        lines.push("|------|---------|---------------|".to_string());
+        lines.push("| Week | Commits | Lines Changed | Repos |".to_string());
+        lines.push("|------|---------|---------------|-------|".to_string());
         for week in weekly {
             let total_lines = week.lines_added + week.lines_removed;
-            lines.push(format!("| {} | {} | {} |", week.period_label, week.commits, fmt_num(total_lines)));
+            lines.push(format!("| {} | {} | {} | {} |", week.period_label, week.commits, fmt_num(total_lines), week.repos_active));
         }
         lines.push(String::new());
 
-        // Repository list
-        lines.push("## Repositories".to_string());
+        // Monthly activity
+        lines.push("## Monthly Activity".to_string());
+        lines.push(String::new());
+        let monthly = analyzer.get_monthly_activity(6);
+        lines.push("| Month | Commits | Lines Changed | Repos |".to_string());
+        lines.push("|-------|---------|---------------|-------|".to_string());
+        for month in monthly {
+            let total_lines = month.lines_added + month.lines_removed;
+            lines.push(format!("| {} | {} | {} | {} |", month.period_label, month.commits, fmt_num(total_lines), month.repos_active));
+        }
+        lines.push(String::new());
+
+        // Repository breakdown (per repo)
+        lines.push("## Repositories (detailed)".to_string());
         lines.push(String::new());
 
         let mut repos: Vec<_> = analyzer.get_repos().to_vec();
@@ -114,15 +126,55 @@ impl MarkdownExporter {
                 lines.push(format!("> {}", repo.description));
                 lines.push(String::new());
             }
-            if !repo.technologies.is_empty() {
-                lines.push(format!("**Technologies:** {}", repo.technologies.join(", ")));
+
+            // Basic stats
+            lines.push(format!("**Commits:** {} | **Lines:** +{} / -{}",
+                repo.total_commits, fmt_num(repo.total_lines_added), fmt_num(repo.total_lines_removed)));
+            if let (Some(first), Some(last)) = (repo.first_commit_date, repo.last_commit_date) {
+                lines.push(format!("**Active:** {} to {}", first.format("%Y-%m-%d"), last.format("%Y-%m-%d")));
+            }
+            lines.push(String::new());
+
+            // Per-repo contribution types
+            if !repo.contribution_types.is_empty() {
+                lines.push("**Contribution Breakdown:**".to_string());
+                let mut sorted_types: Vec<_> = repo.contribution_types.iter().collect();
+                sorted_types.sort_by(|a, b| b.1.cmp(a.1));
+                let total: u32 = sorted_types.iter().map(|(_, c)| *c).sum();
+                for (ctype, count) in sorted_types.iter().take(5) {
+                    let pct = if total > 0 { (**count as f64 / total as f64) * 100.0 } else { 0.0 };
+                    lines.push(format!("- {}: {:.1}%", Self::type_label(ctype), pct));
+                }
                 lines.push(String::new());
             }
-            lines.push(format!("- Commits: {}", repo.total_commits));
-            lines.push(format!("- Lines: +{} / -{}", fmt_num(repo.total_lines_added), fmt_num(repo.total_lines_removed)));
-            if let (Some(first), Some(last)) = (repo.first_commit_date, repo.last_commit_date) {
-                lines.push(format!("- Active: {} to {}", first.format("%Y-%m-%d"), last.format("%Y-%m-%d")));
+
+            // Per-repo languages
+            if !repo.languages.is_empty() {
+                lines.push("**Languages:**".to_string());
+                let mut sorted_langs: Vec<_> = repo.languages.iter().collect();
+                sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
+                let total: u32 = sorted_langs.iter().map(|(_, c)| *c).sum();
+                for (lang, count) in sorted_langs.iter().take(5) {
+                    let pct = if total > 0 { (**count as f64 / total as f64) * 100.0 } else { 0.0 };
+                    lines.push(format!("- {}: {:.1}%", lang, pct));
+                }
+                lines.push(String::new());
             }
+
+            // Per-repo file extensions
+            if !repo.file_extensions.is_empty() {
+                lines.push("**File Types:**".to_string());
+                let mut sorted_exts: Vec<_> = repo.file_extensions.iter().collect();
+                sorted_exts.sort_by(|a, b| b.1.cmp(a.1));
+                let total: u32 = sorted_exts.iter().map(|(_, c)| *c).sum();
+                for (ext, count) in sorted_exts.iter().take(5) {
+                    let pct = if total > 0 { (**count as f64 / total as f64) * 100.0 } else { 0.0 };
+                    lines.push(format!("- {}: {:.1}%", ext, pct));
+                }
+                lines.push(String::new());
+            }
+
+            lines.push("---".to_string());
             lines.push(String::new());
         }
 
