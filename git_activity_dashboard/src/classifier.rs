@@ -1837,4 +1837,141 @@ mod tests {
         assert_eq!(result1.contribution_type, result2.contribution_type);
         assert_eq!(result1.language, result2.language);
     }
+
+    // ============================================================================
+    // False Positive Tests - Verifying classifier correctly avoids false positives
+    // These files contain substrings like "test" but should NOT be classified as tests
+    // ============================================================================
+
+    #[test]
+    fn test_no_false_positive_testimonials_is_production_code() {
+        // "testimonials.py" contains "test" substring but is production code
+        // Classifier uses precise patterns like "test_" and "_test." not just "test"
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/testimonials.py", 50, 10);
+
+        // Correctly classified as ProductionCode (no false positive!)
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    #[test]
+    fn test_no_false_positive_contest_is_production_code() {
+        // "contest.js" contains "test" substring but should be production code
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/contest.js", 80, 16);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    #[test]
+    fn test_no_false_positive_latest_is_config() {
+        // "latest.json" contains "test" substring but should be config
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("latest.json", 20, 4);
+
+        assert_eq!(result.contribution_type, ContributionType::SpecsConfig);
+    }
+
+    #[test]
+    fn test_no_false_positive_attest_is_production_code() {
+        // "attest.go" contains "test" substring but is production code
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/attest.go", 60, 12);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    #[test]
+    fn test_no_false_positive_document_processor_is_production_code() {
+        // "document_processor.py" should be production code, not documentation
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/document_processor.py", 100, 20);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    #[test]
+    fn test_no_false_positive_manifest_is_config() {
+        // "manifest.json" contains "man" but should be config, not documentation
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("manifest.json", 30, 6);
+
+        assert_eq!(result.contribution_type, ContributionType::SpecsConfig);
+    }
+
+    #[test]
+    fn test_no_false_positive_fastest_is_production_code() {
+        // "fastest.rs" contains "test" substring but is production code
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/algorithms/fastest.rs", 150, 30);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    #[test]
+    fn test_no_false_positive_protest_is_production_code() {
+        // "protest.ts" contains "test" substring but is production code
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/protest.ts", 90, 18);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    #[test]
+    fn test_no_false_positive_greatest_is_production_code() {
+        // "greatest.py" contains "test" substring
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("utils/greatest.py", 45, 9);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    #[test]
+    fn test_no_false_positive_detest_is_production_code() {
+        // "detest.rb" contains "test" substring
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("lib/detest.rb", 35, 7);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+    }
+
+    // ============================================================================
+    // True Negative Tests - Files that correctly are NOT classified as certain types
+    // ============================================================================
+
+    #[test]
+    fn test_true_negative_regular_py_is_not_test() {
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/utils.py", 40, 8);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+        assert_ne!(result.contribution_type, ContributionType::Tests);
+    }
+
+    #[test]
+    fn test_true_negative_main_rs_is_not_documentation() {
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/main.rs", 200, 40);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+        assert_ne!(result.contribution_type, ContributionType::Documentation);
+    }
+
+    #[test]
+    fn test_true_negative_app_js_is_not_infrastructure() {
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("src/app.js", 120, 24);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+        assert_ne!(result.contribution_type, ContributionType::Infrastructure);
+    }
+
+    #[test]
+    fn test_true_negative_component_tsx_is_not_styling() {
+        let classifier = FileClassifier::new();
+        let result = classifier.classify("components/Header.tsx", 80, 16);
+
+        assert_eq!(result.contribution_type, ContributionType::ProductionCode);
+        assert_ne!(result.contribution_type, ContributionType::Styling);
+    }
 }
