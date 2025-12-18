@@ -256,14 +256,16 @@ fn test_markdown_export_empty_description() {
 }
 
 #[test]
-fn test_markdown_type_label() {
-    assert_eq!(MarkdownExporter::type_label("production_code"), "Production Code");
-    assert_eq!(MarkdownExporter::type_label("tests"), "Tests");
-    assert_eq!(MarkdownExporter::type_label("documentation"), "Documentation");
-    assert_eq!(MarkdownExporter::type_label("specs_config"), "Specs & Config");
-    assert_eq!(MarkdownExporter::type_label("infrastructure"), "Infrastructure");
-    assert_eq!(MarkdownExporter::type_label("styling"), "Styling");
-    assert_eq!(MarkdownExporter::type_label("unknown"), "Other");
+fn test_contribution_type_label() {
+    use crate::utils::contribution_type_label;
+
+    assert_eq!(contribution_type_label("productioncode"), "Production Code");
+    assert_eq!(contribution_type_label("tests"), "Tests");
+    assert_eq!(contribution_type_label("documentation"), "Documentation");
+    assert_eq!(contribution_type_label("specsconfig"), "Specs & Config");
+    assert_eq!(contribution_type_label("infrastructure"), "Infrastructure");
+    assert_eq!(contribution_type_label("styling"), "Styling");
+    assert_eq!(contribution_type_label("unknown"), "Other");
 }
 
 #[test]

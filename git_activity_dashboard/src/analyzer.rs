@@ -1,4 +1,5 @@
 use crate::classifier::{FileClassification, FileClassifier};
+use crate::traits::{Analytics, PeriodStrategy};
 use chrono::{DateTime, Datelike, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -698,6 +699,82 @@ impl GitAnalyzer {
             weekly_activity: self.get_weekly_activity(4),
             monthly_activity: self.get_monthly_activity(6),
         }
+    }
+
+    /// Generic activity aggregation using a PeriodStrategy
+    /// This enables extensible time-based grouping (Open/Closed Principle)
+    pub fn aggregate_activity<P: PeriodStrategy>(&self, strategy: &P, count: u32) -> Vec<ActivitySummary> {
+        let mut summaries = Vec::with_capacity(count as usize);
+        let mut active_repos: HashSet<&String> = HashSet::new();
+
+        for i in 0..count {
+            let (start, end) = strategy.boundaries(i);
+
+            let mut summary = ActivitySummary {
+                period_start: start,
+                period_end: end,
+                period_label: strategy.label(i),
+                commits: 0,
+                lines_added: 0,
+                lines_removed: 0,
+                files_changed: 0,
+                repos_active: 0,
+                contribution_breakdown: HashMap::new(),
+                language_breakdown: HashMap::new(),
+            };
+
+            active_repos.clear();
+
+            for repo in &self.repos {
+                for commit in &repo.commits {
+                    if commit.date >= start && commit.date <= end {
+                        summary.commits += 1;
+                        summary.lines_added += commit.lines_added;
+                        summary.lines_removed += commit.lines_removed;
+                        summary.files_changed += commit.files_changed;
+                        active_repos.insert(&repo.name);
+
+                        // Aggregate contribution types for this period
+                        for (ctype, lines) in &commit.contribution_types {
+                            *summary.contribution_breakdown.entry(ctype.clone()).or_insert(0) += lines;
+                        }
+
+                        // Aggregate languages for this period
+                        for (lang, lines) in &commit.languages {
+                            *summary.language_breakdown.entry(lang.clone()).or_insert(0) += lines;
+                        }
+                    }
+                }
+            }
+
+            summary.repos_active = active_repos.len() as u32;
+            summaries.push(summary);
+        }
+
+        summaries
+    }
+}
+
+// Implement the Analytics trait for GitAnalyzer (Dependency Inversion Principle)
+impl Analytics for GitAnalyzer {
+    fn total_stats(&self) -> TotalStats {
+        self.get_total_stats()
+    }
+
+    fn repos(&self) -> &[RepoStats] {
+        self.get_repos()
+    }
+
+    fn daily_activity(&self, days: u32) -> Vec<ActivitySummary> {
+        self.get_daily_activity(days)
+    }
+
+    fn weekly_activity(&self, weeks: u32) -> Vec<ActivitySummary> {
+        self.get_weekly_activity(weeks)
+    }
+
+    fn monthly_activity(&self, months: u32) -> Vec<ActivitySummary> {
+        self.get_monthly_activity(months)
     }
 }
 

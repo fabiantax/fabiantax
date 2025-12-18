@@ -1,3 +1,4 @@
+use crate::traits::Classifier;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -314,6 +315,19 @@ impl FileClassifier {
             ".ps1" => Some("PowerShell".to_string()),
             _ => None,
         }
+    }
+}
+
+// Implement the Classifier trait for FileClassifier
+impl Classifier for FileClassifier {
+    fn classify(&self, file_path: &str, lines_added: u32, lines_removed: u32) -> FileClassification {
+        // Delegate to the inherent method
+        FileClassifier::classify(self, file_path, lines_added, lines_removed)
+    }
+
+    fn detect_language(&self, extension: &str) -> Option<String> {
+        // Delegate to the inherent method (make it public via trait)
+        FileClassifier::detect_language(extension)
     }
 }
 
