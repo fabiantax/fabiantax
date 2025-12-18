@@ -87,6 +87,8 @@ fn create_sample_commit(hash: &str, date_str: &str) -> CommitInfo {
         lines_added: 10,
         lines_removed: 5,
         file_classifications: Vec::new(),
+        contribution_types: HashMap::from([("productioncode".to_string(), 15)]),
+        languages: HashMap::from([("Rust".to_string(), 15)]),
     }
 }
 

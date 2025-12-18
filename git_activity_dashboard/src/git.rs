@@ -156,11 +156,11 @@ pub fn analyze_repo(path: &Path, options: &AnalyzeOptions) -> Result<RepoStats, 
         }
 
         // Get diff stats
-        let (insertions, deletions, files_changed) = get_commit_diff_stats(&repo, &commit, &classifier, gitignore.as_ref(), &mut languages, &mut contribution_types, &mut file_extensions)?;
+        let diff_stats = get_commit_diff_stats(&repo, &commit, &classifier, gitignore.as_ref(), &mut languages, &mut contribution_types, &mut file_extensions)?;
 
-        stats.total_lines_added += insertions;
-        stats.total_lines_removed += deletions;
-        stats.total_files_changed += files_changed;
+        stats.total_lines_added += diff_stats.insertions;
+        stats.total_lines_removed += diff_stats.deletions;
+        stats.total_files_changed += diff_stats.files_changed;
         commit_count += 1;
 
         // Store commit info for time-based grouping (weekly/monthly activity)
@@ -170,10 +170,12 @@ pub fn analyze_repo(path: &Path, options: &AnalyzeOptions) -> Result<RepoStats, 
             email: commit.author().email().unwrap_or("").to_string(),
             date: datetime,
             message: commit.message().unwrap_or("").lines().next().unwrap_or("").to_string(),
-            files_changed,
-            lines_added: insertions,
-            lines_removed: deletions,
+            files_changed: diff_stats.files_changed,
+            lines_added: diff_stats.insertions,
+            lines_removed: diff_stats.deletions,
             file_classifications: Vec::new(),
+            contribution_types: diff_stats.contribution_types,
+            languages: diff_stats.languages,
         };
         stats.commits.push(commit_info);
     }
@@ -242,16 +244,25 @@ fn load_gitignore(repo_path: &Path) -> Option<Gitignore> {
     builder.build().ok()
 }
 
+/// Stats returned from analyzing a single commit's diff
+struct CommitDiffStats {
+    insertions: u32,
+    deletions: u32,
+    files_changed: u32,
+    languages: HashMap<String, u32>,
+    contribution_types: HashMap<String, u32>,
+}
+
 /// Get diff stats for a single commit
 fn get_commit_diff_stats(
     repo: &Repository,
     commit: &Commit,
     classifier: &FileClassifier,
     gitignore: Option<&Gitignore>,
-    languages: &mut HashMap<String, u32>,
-    contribution_types: &mut HashMap<String, u32>,
-    file_extensions: &mut HashMap<String, u32>,
-) -> Result<(u32, u32, u32), GitError> {
+    repo_languages: &mut HashMap<String, u32>,
+    repo_contribution_types: &mut HashMap<String, u32>,
+    repo_file_extensions: &mut HashMap<String, u32>,
+) -> Result<CommitDiffStats, GitError> {
     let tree = commit.tree().map_err(|e| GitError::DiffError(e.message().to_string()))?;
 
     // Get parent tree (or empty for root commit)
@@ -274,6 +285,10 @@ fn get_commit_diff_stats(
     let deletions = stats.deletions() as u32;
     let files_changed = stats.files_changed() as u32;
 
+    // Per-commit tracking
+    let mut commit_languages: HashMap<String, u32> = HashMap::new();
+    let mut commit_contribution_types: HashMap<String, u32> = HashMap::new();
+
     // Iterate through file changes for classification
     diff.foreach(
         &mut |delta, _| {
@@ -290,18 +305,20 @@ fn get_commit_diff_stats(
                 // Classify the file
                 let classification = classifier.classify(&path_str, insertions, deletions);
 
-                // Track language
+                // Track language (both repo-level and per-commit)
                 if let Some(ref lang) = classification.language {
-                    *languages.entry(lang.clone()).or_insert(0) += insertions + deletions;
+                    *repo_languages.entry(lang.clone()).or_insert(0) += insertions + deletions;
+                    *commit_languages.entry(lang.clone()).or_insert(0) += insertions + deletions;
                 }
 
-                // Track contribution type
+                // Track contribution type (both repo-level and per-commit)
                 let type_key = format!("{:?}", classification.contribution_type).to_lowercase();
-                *contribution_types.entry(type_key).or_insert(0) += insertions + deletions;
+                *repo_contribution_types.entry(type_key.clone()).or_insert(0) += insertions + deletions;
+                *commit_contribution_types.entry(type_key).or_insert(0) += insertions + deletions;
 
-                // Track file extension
+                // Track file extension (repo-level only)
                 let ext = get_file_extension(&path_str);
-                *file_extensions.entry(ext).or_insert(0) += insertions + deletions;
+                *repo_file_extensions.entry(ext).or_insert(0) += insertions + deletions;
             }
             true
         },
@@ -310,7 +327,13 @@ fn get_commit_diff_stats(
         None,
     ).map_err(|e| GitError::DiffError(e.message().to_string()))?;
 
-    Ok((insertions, deletions, files_changed))
+    Ok(CommitDiffStats {
+        insertions,
+        deletions,
+        files_changed,
+        languages: commit_languages,
+        contribution_types: commit_contribution_types,
+    })
 }
 
 /// Extract file extension from path

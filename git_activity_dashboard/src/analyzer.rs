@@ -41,6 +41,10 @@ pub struct CommitInfo {
     pub lines_removed: u32,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub file_classifications: Vec<FileClassification>,
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub contribution_types: HashMap<String, u32>,
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub languages: HashMap<String, u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -295,6 +299,8 @@ impl GitAnalyzer {
                                 lines_added: 0,
                                 lines_removed: 0,
                                 file_classifications: Vec::new(),
+                                contribution_types: HashMap::new(),
+                                languages: HashMap::new(),
                             });
                         }
                         Err(e) => {
@@ -533,6 +539,16 @@ impl GitAnalyzer {
                         summary.lines_removed += commit.lines_removed;
                         summary.files_changed += commit.files_changed;
                         active_repos.insert(&repo.name);
+
+                        // Aggregate contribution types for this period
+                        for (ctype, lines) in &commit.contribution_types {
+                            *summary.contribution_breakdown.entry(ctype.clone()).or_insert(0) += lines;
+                        }
+
+                        // Aggregate languages for this period
+                        for (lang, lines) in &commit.languages {
+                            *summary.language_breakdown.entry(lang.clone()).or_insert(0) += lines;
+                        }
                     }
                 }
             }
@@ -577,6 +593,16 @@ impl GitAnalyzer {
                         summary.lines_removed += commit.lines_removed;
                         summary.files_changed += commit.files_changed;
                         active_repos.insert(&repo.name);
+
+                        // Aggregate contribution types for this period
+                        for (ctype, lines) in &commit.contribution_types {
+                            *summary.contribution_breakdown.entry(ctype.clone()).or_insert(0) += lines;
+                        }
+
+                        // Aggregate languages for this period
+                        for (lang, lines) in &commit.languages {
+                            *summary.language_breakdown.entry(lang.clone()).or_insert(0) += lines;
+                        }
                     }
                 }
             }
@@ -642,6 +668,16 @@ impl GitAnalyzer {
                         summary.lines_removed += commit.lines_removed;
                         summary.files_changed += commit.files_changed;
                         active_repos.insert(&repo.name);
+
+                        // Aggregate contribution types for this period
+                        for (ctype, lines) in &commit.contribution_types {
+                            *summary.contribution_breakdown.entry(ctype.clone()).or_insert(0) += lines;
+                        }
+
+                        // Aggregate languages for this period
+                        for (lang, lines) in &commit.languages {
+                            *summary.language_breakdown.entry(lang.clone()).or_insert(0) += lines;
+                        }
                     }
                 }
             }

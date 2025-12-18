@@ -49,6 +49,8 @@ fn create_test_analyzer() -> GitAnalyzer {
                 lines_added: 200,
                 lines_removed: 50,
                 file_classifications: vec![],
+                contribution_types: HashMap::from([("productioncode".to_string(), 250)]),
+                languages: HashMap::from([("Rust".to_string(), 250)]),
             },
             CommitInfo {
                 hash: "commit2".to_string(),
@@ -60,6 +62,8 @@ fn create_test_analyzer() -> GitAnalyzer {
                 lines_added: 150,
                 lines_removed: 25,
                 file_classifications: vec![],
+                contribution_types: HashMap::from([("productioncode".to_string(), 175)]),
+                languages: HashMap::from([("Rust".to_string(), 175)]),
             },
             CommitInfo {
                 hash: "commit3".to_string(),
@@ -71,6 +75,8 @@ fn create_test_analyzer() -> GitAnalyzer {
                 lines_added: 150,
                 lines_removed: 25,
                 file_classifications: vec![],
+                contribution_types: HashMap::from([("documentation".to_string(), 175)]),
+                languages: HashMap::from([("Documentation".to_string(), 175)]),
             },
         ],
     };
@@ -112,6 +118,8 @@ fn create_test_analyzer() -> GitAnalyzer {
                 lines_added: 1000,
                 lines_removed: 200,
                 file_classifications: vec![],
+                contribution_types: HashMap::from([("productioncode".to_string(), 1200)]),
+                languages: HashMap::from([("Python".to_string(), 1200)]),
             },
             CommitInfo {
                 hash: "commit5".to_string(),
@@ -123,6 +131,8 @@ fn create_test_analyzer() -> GitAnalyzer {
                 lines_added: 500,
                 lines_removed: 100,
                 file_classifications: vec![],
+                contribution_types: HashMap::from([("tests".to_string(), 600)]),
+                languages: HashMap::from([("Python".to_string(), 600)]),
             },
         ],
     };
@@ -355,6 +365,8 @@ fn test_linkedin_export_empty_week() {
             lines_added: 50,
             lines_removed: 10,
             file_classifications: vec![],
+            contribution_types: HashMap::from([("productioncode".to_string(), 60)]),
+            languages: HashMap::new(),
         }],
         ..Default::default()
     };
