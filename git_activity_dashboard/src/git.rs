@@ -3,7 +3,7 @@
 //! This module provides native git access without shelling out to the git command.
 
 use crate::classifier::FileClassifier;
-use crate::analyzer::RepoStats;
+use crate::analyzer::{RepoStats, CommitInfo};
 use chrono::{DateTime, TimeZone, Utc};
 use git2::{Commit, DiffOptions, Repository};
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
@@ -162,6 +162,20 @@ pub fn analyze_repo(path: &Path, options: &AnalyzeOptions) -> Result<RepoStats, 
         stats.total_lines_removed += deletions;
         stats.total_files_changed += files_changed;
         commit_count += 1;
+
+        // Store commit info for time-based grouping (weekly/monthly activity)
+        let commit_info = CommitInfo {
+            hash: oid.to_string(),
+            author: commit.author().name().unwrap_or("Unknown").to_string(),
+            email: commit.author().email().unwrap_or("").to_string(),
+            date: datetime,
+            message: commit.message().unwrap_or("").lines().next().unwrap_or("").to_string(),
+            files_changed,
+            lines_added: insertions,
+            lines_removed: deletions,
+            file_classifications: Vec::new(),
+        };
+        stats.commits.push(commit_info);
     }
 
     stats.total_commits = commit_count as u32;
