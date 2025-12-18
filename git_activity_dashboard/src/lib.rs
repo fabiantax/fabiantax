@@ -2,12 +2,19 @@ pub mod analyzer;
 pub mod classifier;
 pub mod exporters;
 
+// Native git operations (not available in WASM)
+#[cfg(not(target_arch = "wasm32"))]
+pub mod git;
+
 pub use analyzer::{
     GitAnalyzer, RepoStats, CommitInfo, TotalStats, DashboardData, ActivitySummary,
     ParseOptions, ParseError, GIT_LOG_FORMAT, GIT_LOG_DELIMITER, git_log_command,
 };
 pub use classifier::{FileClassifier, FileClassification, ContributionType};
 pub use exporters::{MarkdownExporter, LinkedInExporter, PortfolioExporter, BadgeExporter};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use git::{analyze_repo, find_repos, is_git_repo, get_head_hash, AnalyzeOptions, GitError};
 
 // WASM bindings
 #[cfg(feature = "wasm")]

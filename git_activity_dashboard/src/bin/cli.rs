@@ -1,11 +1,10 @@
 use clap::Parser;
 use git_activity_dashboard::{
     GitAnalyzer, BadgeExporter, LinkedInExporter, MarkdownExporter, PortfolioExporter,
-    ParseOptions, GIT_LOG_FORMAT,
+    analyze_repo, find_repos, is_git_repo, AnalyzeOptions,
 };
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "git-activity")]
@@ -22,7 +21,7 @@ struct Cli {
 
     /// Maximum depth when scanning for repos
     #[arg(short, long, default_value = "3")]
-    depth: u32,
+    depth: usize,
 
     /// Filter commits by author email
     #[arg(short, long)]
@@ -31,6 +30,10 @@ struct Cli {
     /// Filter commits by author name
     #[arg(short, long)]
     author: Option<String>,
+
+    /// Maximum commits to analyze per repo (default: all)
+    #[arg(long)]
+    max_commits: Option<usize>,
 
     /// Export to JSON file
     #[arg(long, value_name = "FILE")]
@@ -61,57 +64,6 @@ struct Cli {
     quiet: bool,
 }
 
-fn find_git_repos(base_path: &Path, max_depth: u32) -> Vec<PathBuf> {
-    let mut repos = Vec::new();
-    find_git_repos_recursive(base_path, max_depth, 0, &mut repos);
-    repos
-}
-
-fn find_git_repos_recursive(path: &Path, max_depth: u32, current_depth: u32, repos: &mut Vec<PathBuf>) {
-    if current_depth > max_depth {
-        return;
-    }
-
-    if path.join(".git").is_dir() {
-        repos.push(path.to_path_buf());
-        return; // Don't search inside git repos
-    }
-
-    if let Ok(entries) = fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let entry_path = entry.path();
-            if entry_path.is_dir() {
-                if let Some(name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                    if !name.starts_with('.') {
-                        find_git_repos_recursive(&entry_path, max_depth, current_depth + 1, repos);
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn get_git_log(repo_path: &Path, author_email: &Option<String>, author_name: &Option<String>) -> Option<String> {
-    let mut cmd = Command::new("git");
-    cmd.current_dir(repo_path)
-        .arg("log")
-        .arg(format!("--format={}", GIT_LOG_FORMAT))
-        .arg("--numstat");
-
-    if let Some(email) = author_email {
-        cmd.arg("--author").arg(email);
-    } else if let Some(name) = author_name {
-        cmd.arg("--author").arg(name);
-    }
-
-    let output = cmd.output().ok()?;
-    if output.status.success() {
-        String::from_utf8(output.stdout).ok()
-    } else {
-        None
-    }
-}
-
 fn print_summary(analyzer: &GitAnalyzer) {
     let stats = analyzer.get_total_stats();
 
@@ -132,13 +84,13 @@ fn print_summary(analyzer: &GitAnalyzer) {
     let mut sorted_types: Vec<_> = stats.contribution_types.iter().collect();
     sorted_types.sort_by(|a, b| b.1.cmp(a.1));
 
-    for (ctype, count) in &sorted_types {
+    for (ctype, _) in &sorted_types {
         let pct = stats.contribution_percentages.get(*ctype).unwrap_or(&0.0);
         let label = match ctype.as_str() {
-            "production_code" => "Production Code",
+            "productioncode" => "Production Code",
             "tests" => "Tests",
             "documentation" => "Documentation",
-            "specs_config" => "Specs & Config",
+            "specsconfig" => "Specs & Config",
             "infrastructure" => "Infrastructure",
             "styling" => "Styling",
             _ => "Other",
@@ -155,7 +107,7 @@ fn print_summary(analyzer: &GitAnalyzer) {
         let mut sorted_langs: Vec<_> = stats.languages.iter().collect();
         sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
 
-        for (lang, _count) in sorted_langs.iter().take(8) {
+        for (lang, _) in sorted_langs.iter().take(8) {
             let pct = stats.language_percentages.get(*lang).unwrap_or(&0.0);
             let bar = "█".repeat((*pct / 2.0) as usize);
             println!("  {:20} {:5.1}% {}", lang, pct, bar);
@@ -171,7 +123,7 @@ fn print_summary(analyzer: &GitAnalyzer) {
         let mut sorted_exts: Vec<_> = stats.file_extensions.iter().collect();
         sorted_exts.sort_by(|a, b| b.1.cmp(a.1));
 
-        for (ext, _count) in sorted_exts.iter().take(10) {
+        for (ext, _) in sorted_exts.iter().take(10) {
             let pct = stats.file_extension_percentages.get(*ext).unwrap_or(&0.0);
             let bar = "█".repeat((*pct / 2.0) as usize);
             println!("  {:20} {:5.1}% {}", ext, pct, bar);
@@ -260,7 +212,9 @@ fn main() {
             eprintln!("Error: {} is not a directory", scan_path.display());
             std::process::exit(1);
         }
-        let repos = find_git_repos(&scan_path, cli.depth);
+
+        // Use walkdir via our git module
+        let repos = find_repos(&scan_path, cli.depth);
         if repos.is_empty() {
             eprintln!("No git repositories found in {}", scan_path.display());
             std::process::exit(1);
@@ -272,7 +226,7 @@ fn main() {
     } else {
         // Default to current directory
         let cwd = std::env::current_dir().expect("Failed to get current directory");
-        if cwd.join(".git").is_dir() {
+        if is_git_repo(&cwd) {
             vec![cwd]
         } else {
             eprintln!("Error: Current directory is not a git repository.");
@@ -281,44 +235,43 @@ fn main() {
         }
     };
 
-    // Create analyzer with options
-    let parse_options = ParseOptions {
-        store_commits: true,  // Need commits for activity views
-        legacy_delimiter: false,
-    };
-    let mut analyzer = GitAnalyzer::new(cli.email.clone(), cli.author.clone())
-        .with_options(parse_options);
+    // Create analyzer
+    let mut analyzer = GitAnalyzer::new(cli.email.clone(), cli.author.clone());
 
-    // Analyze repos
+    // Set up analysis options
+    let options = AnalyzeOptions {
+        author_email: cli.email.clone(),
+        author_name: cli.author.clone(),
+        since_commit: None,
+        max_commits: cli.max_commits,
+        store_commits: false, // Don't store individual commits, just aggregate
+    };
+
+    // Analyze repos using git2 (no shell!)
     for path in &repo_paths {
         if !cli.quiet {
             println!("Analyzing: {}", path.display());
         }
 
-        if let Some(log_output) = get_git_log(path, &cli.email, &cli.author) {
-            let repo_name = path.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            match analyzer.parse_git_log(&repo_name, &path.to_string_lossy(), &log_output) {
-                Ok(_) => {},
-                Err(e) => {
-                    if !cli.quiet {
-                        eprintln!("Warning: Failed to parse {}: {}", repo_name, e);
-                    }
+        match analyze_repo(path, &options) {
+            Ok(stats) => {
+                analyzer.add_repo_data(stats);
+            }
+            Err(e) => {
+                if !cli.quiet {
+                    eprintln!("Warning: Failed to analyze {}: {}", path.display(), e);
                 }
             }
         }
     }
 
-    // Cache stats for better performance
-    analyzer.cache_stats();
-
     if analyzer.get_repos().is_empty() {
         eprintln!("No repositories were successfully analyzed.");
         std::process::exit(1);
     }
+
+    // Cache stats for better performance
+    analyzer.cache_stats();
 
     // Print summary
     if !cli.quiet {

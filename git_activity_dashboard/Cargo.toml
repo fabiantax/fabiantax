@@ -37,6 +37,7 @@ js-sys = { version = "0.3", optional = true }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Git operations only available in native builds
 git2 = "0.18"
+walkdir = "2.4"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
