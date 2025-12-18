@@ -62,6 +62,10 @@ struct Cli {
     /// Suppress console output
     #[arg(short, long)]
     quiet: bool,
+
+    /// Include files that match .gitignore patterns (disabled by default)
+    #[arg(long)]
+    include_ignored: bool,
 }
 
 fn print_summary(analyzer: &GitAnalyzer) {
@@ -93,7 +97,12 @@ fn print_summary(analyzer: &GitAnalyzer) {
             "specsconfig" => "Specs & Config",
             "infrastructure" => "Infrastructure",
             "styling" => "Styling",
-            _ => "Other",
+            "buildartifacts" => "Build Artifacts",
+            "assets" => "Assets",
+            "generated" => "Generated",
+            "data" => "Data",
+            "other" => "Other",
+            _ => ctype.as_str(),
         };
         let bar = "█".repeat((*pct / 2.0) as usize);
         println!("  {:20} {:5.1}% {}", label, pct, bar);
@@ -245,6 +254,7 @@ fn main() {
         since_commit: None,
         max_commits: cli.max_commits,
         store_commits: false, // Don't store individual commits, just aggregate
+        respect_gitignore: !cli.include_ignored, // Skip .gitignore files by default
     };
 
     // Analyze repos using git2 (no shell!)

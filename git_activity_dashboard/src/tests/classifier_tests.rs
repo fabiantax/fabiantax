@@ -1083,11 +1083,11 @@ fn test_classify_identifies_files_without_extension_as_other() {
 }
 
 #[test]
-fn test_classify_identifies_binary_files_as_other() {
+fn test_classify_identifies_image_files_as_assets() {
     let classifier = FileClassifier::new();
     let result = classifier.classify("image.png", 0, 0);
 
-    assert_eq!(result.contribution_type, ContributionType::Other);
+    assert_eq!(result.contribution_type, ContributionType::Assets);
     assert_eq!(result.language, None);
 }
 

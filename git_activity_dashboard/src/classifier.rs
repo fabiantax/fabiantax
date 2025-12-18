@@ -9,6 +9,10 @@ pub enum ContributionType {
     SpecsConfig,
     Infrastructure,
     Styling,
+    BuildArtifacts,
+    Assets,
+    Generated,
+    Data,
     Other,
 }
 
@@ -21,6 +25,10 @@ impl ContributionType {
             ContributionType::SpecsConfig => "Specs & Config",
             ContributionType::Infrastructure => "Infrastructure",
             ContributionType::Styling => "Styling",
+            ContributionType::BuildArtifacts => "Build Artifacts",
+            ContributionType::Assets => "Assets",
+            ContributionType::Generated => "Generated",
+            ContributionType::Data => "Data",
             ContributionType::Other => "Other",
         }
     }
@@ -73,6 +81,54 @@ impl FileClassifier {
     const STYLE_PATTERNS: &'static [&'static str] = &[
         ".css", ".scss", ".sass", ".less", ".styl", ".styled.",
         "styles/", "/style/", "theme", ".tailwind",
+    ];
+
+    // Build artifacts - compiled files, libraries, caches
+    const BUILD_ARTIFACT_EXTENSIONS: &'static [&'static str] = &[
+        ".o", ".obj", ".a", ".lib", ".so", ".dll", ".dylib", ".exe",
+        ".rlib", ".rmeta", ".d", ".pdb", ".ilk", ".exp",
+        ".class", ".jar", ".war", ".pyc", ".pyo", "__pycache__",
+        ".wasm", ".wat",
+        ".min.js", ".min.css", ".bundle.js", ".chunk.js",
+    ];
+
+    const BUILD_ARTIFACT_PATTERNS: &'static [&'static str] = &[
+        "target/", "build/", "dist/", "out/", "bin/", "obj/",
+        "node_modules/", ".cache/", "__pycache__/", ".tox/",
+        "vendor/", "deps/", ".fingerprint/", "incremental/",
+        ".timestamp", ".cargo-lock",
+    ];
+
+    // Assets - images, fonts, media, binary resources
+    const ASSET_EXTENSIONS: &'static [&'static str] = &[
+        ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
+        ".ttf", ".otf", ".woff", ".woff2", ".eot",
+        ".mp3", ".mp4", ".wav", ".ogg", ".webm", ".avi", ".mov",
+        ".pdf", ".zip", ".tar", ".gz", ".rar", ".7z",
+    ];
+
+    const ASSET_PATTERNS: &'static [&'static str] = &[
+        "assets/", "images/", "img/", "fonts/", "media/", "static/",
+        "public/", "resources/",
+    ];
+
+    // Generated files - auto-generated code, lock files
+    const GENERATED_PATTERNS: &'static [&'static str] = &[
+        ".generated.", ".g.", "_generated", "generated/",
+        ".lock", "package-lock.json", "yarn.lock", "cargo.lock",
+        "poetry.lock", "pipfile.lock", "composer.lock", "gemfile.lock",
+        ".min.", ".map", ".d.ts",
+    ];
+
+    // Data files - databases, datasets, logs
+    const DATA_EXTENSIONS: &'static [&'static str] = &[
+        ".csv", ".tsv", ".sqlite", ".db", ".sql",
+        ".log", ".jsonl", ".ndjson", ".parquet", ".avro",
+        ".xml", ".xls", ".xlsx",
+    ];
+
+    const DATA_PATTERNS: &'static [&'static str] = &[
+        "data/", "datasets/", "fixtures/", "seeds/", "migrations/",
     ];
 
     pub fn new() -> Self {
@@ -136,6 +192,56 @@ impl FileClassifier {
                 file_path: file_path.to_string(),
                 contribution_type: ContributionType::Styling,
                 language: Some("CSS/Styling".to_string()),
+                lines_added,
+                lines_removed,
+            };
+        }
+
+        // Check for build artifacts (should typically be gitignored)
+        if Self::BUILD_ARTIFACT_EXTENSIONS.iter().any(|e| file_lower.ends_with(e))
+            || Self::BUILD_ARTIFACT_PATTERNS.iter().any(|p| file_lower.contains(p))
+        {
+            return FileClassification {
+                file_path: file_path.to_string(),
+                contribution_type: ContributionType::BuildArtifacts,
+                language: None,
+                lines_added,
+                lines_removed,
+            };
+        }
+
+        // Check for assets (images, fonts, media)
+        if Self::ASSET_EXTENSIONS.iter().any(|e| file_lower.ends_with(e))
+            || Self::ASSET_PATTERNS.iter().any(|p| file_lower.contains(p))
+        {
+            return FileClassification {
+                file_path: file_path.to_string(),
+                contribution_type: ContributionType::Assets,
+                language: None,
+                lines_added,
+                lines_removed,
+            };
+        }
+
+        // Check for generated files
+        if Self::GENERATED_PATTERNS.iter().any(|p| file_lower.contains(p)) {
+            return FileClassification {
+                file_path: file_path.to_string(),
+                contribution_type: ContributionType::Generated,
+                language: None,
+                lines_added,
+                lines_removed,
+            };
+        }
+
+        // Check for data files
+        if Self::DATA_EXTENSIONS.iter().any(|e| file_lower.ends_with(e))
+            || Self::DATA_PATTERNS.iter().any(|p| file_lower.contains(p))
+        {
+            return FileClassification {
+                file_path: file_path.to_string(),
+                contribution_type: ContributionType::Data,
+                language: None,
                 lines_added,
                 lines_removed,
             };

@@ -53,12 +53,14 @@ fn test_analyze_options_with_filters() {
         since_commit: Some("abc123".to_string()),
         max_commits: Some(100),
         store_commits: true,
+        respect_gitignore: true,
     };
     assert_eq!(opts.author_email.unwrap(), "test@example.com");
     assert_eq!(opts.author_name.unwrap(), "Test User");
     assert_eq!(opts.since_commit.unwrap(), "abc123");
     assert_eq!(opts.max_commits.unwrap(), 100);
     assert!(opts.store_commits);
+    assert!(opts.respect_gitignore);
 }
 
 #[test]

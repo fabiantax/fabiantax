@@ -6,6 +6,7 @@ use crate::classifier::FileClassifier;
 use crate::analyzer::RepoStats;
 use chrono::{DateTime, TimeZone, Utc};
 use git2::{Commit, DiffOptions, Repository};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -49,6 +50,8 @@ pub struct AnalyzeOptions {
     pub max_commits: Option<usize>,
     /// Store individual commit details (memory intensive)
     pub store_commits: bool,
+    /// Respect .gitignore patterns (skip ignored files)
+    pub respect_gitignore: bool,
 }
 
 /// Analyze a git repository and return stats
@@ -65,6 +68,13 @@ pub fn analyze_repo(path: &Path, options: &AnalyzeOptions) -> Result<RepoStats, 
         name: repo_name,
         path: path.to_string_lossy().to_string(),
         ..Default::default()
+    };
+
+    // Load .gitignore if respect_gitignore is enabled
+    let gitignore = if options.respect_gitignore {
+        load_gitignore(path)
+    } else {
+        None
     };
 
     let classifier = FileClassifier::new();
@@ -146,7 +156,7 @@ pub fn analyze_repo(path: &Path, options: &AnalyzeOptions) -> Result<RepoStats, 
         }
 
         // Get diff stats
-        let (insertions, deletions, files_changed) = get_commit_diff_stats(&repo, &commit, &classifier, &mut languages, &mut contribution_types, &mut file_extensions)?;
+        let (insertions, deletions, files_changed) = get_commit_diff_stats(&repo, &commit, &classifier, gitignore.as_ref(), &mut languages, &mut contribution_types, &mut file_extensions)?;
 
         stats.total_lines_added += insertions;
         stats.total_lines_removed += deletions;
@@ -165,11 +175,65 @@ pub fn analyze_repo(path: &Path, options: &AnalyzeOptions) -> Result<RepoStats, 
     Ok(stats)
 }
 
+/// Load .gitignore patterns from a repository (including nested gitignores)
+fn load_gitignore(repo_path: &Path) -> Option<Gitignore> {
+    use walkdir::WalkDir;
+
+    let mut builder = GitignoreBuilder::new(repo_path);
+
+    // Load root .gitignore
+    let root_gitignore = repo_path.join(".gitignore");
+    if root_gitignore.exists() {
+        let _ = builder.add(&root_gitignore);
+    }
+
+    // Walk and find all nested .gitignore files
+    for entry in WalkDir::new(repo_path)
+        .max_depth(10)
+        .into_iter()
+        .filter_entry(|e| {
+            e.file_name()
+                .to_str()
+                .map(|s| !s.starts_with('.') || s == ".gitignore")
+                .unwrap_or(false)
+        })
+    {
+        if let Ok(entry) = entry {
+            if entry.file_name() == ".gitignore" && entry.file_type().is_file() {
+                let _ = builder.add(entry.path());
+            }
+        }
+    }
+
+    // Always add common build artifact patterns (using ** for any path depth)
+    // These patterns match anywhere in the path
+    let _ = builder.add_line(None, "**/target/**");
+    let _ = builder.add_line(None, "**/node_modules/**");
+    let _ = builder.add_line(None, "**/build/**");
+    let _ = builder.add_line(None, "**/dist/**");
+    let _ = builder.add_line(None, "**/.fingerprint/**");
+    let _ = builder.add_line(None, "**/incremental/**");
+    let _ = builder.add_line(None, "**/__pycache__/**");
+    let _ = builder.add_line(None, "**/*.o");
+    let _ = builder.add_line(None, "**/*.rlib");
+    let _ = builder.add_line(None, "**/*.rmeta");
+    let _ = builder.add_line(None, "**/*.d");
+    let _ = builder.add_line(None, "**/*.so");
+    let _ = builder.add_line(None, "**/*.dylib");
+    let _ = builder.add_line(None, "**/*.dll");
+    let _ = builder.add_line(None, "**/*.exe");
+    let _ = builder.add_line(None, "**/*.timestamp");
+    let _ = builder.add_line(None, "**/*.pyc");
+
+    builder.build().ok()
+}
+
 /// Get diff stats for a single commit
 fn get_commit_diff_stats(
     repo: &Repository,
     commit: &Commit,
     classifier: &FileClassifier,
+    gitignore: Option<&Gitignore>,
     languages: &mut HashMap<String, u32>,
     contribution_types: &mut HashMap<String, u32>,
     file_extensions: &mut HashMap<String, u32>,
@@ -201,6 +265,13 @@ fn get_commit_diff_stats(
         &mut |delta, _| {
             if let Some(path) = delta.new_file().path() {
                 let path_str = path.to_string_lossy();
+
+                // Skip files that match .gitignore patterns
+                if let Some(gi) = gitignore {
+                    if gi.matched(path, false).is_ignore() {
+                        return true; // Skip this file
+                    }
+                }
 
                 // Classify the file
                 let classification = classifier.classify(&path_str, insertions, deletions);

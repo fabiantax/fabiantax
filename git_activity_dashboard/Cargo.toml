@@ -38,6 +38,7 @@ js-sys = { version = "0.3", optional = true }
 # Git operations only available in native builds
 git2 = "0.18"
 walkdir = "2.4"
+ignore = "0.4"  # gitignore pattern matching (same as ripgrep)
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"
