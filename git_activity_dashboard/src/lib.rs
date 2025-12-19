@@ -1,9 +1,10 @@
 pub mod analyzer;
 pub mod classifier;
 pub mod exporters;
+pub mod parser;
+pub mod periods;
 pub mod traits;
 pub mod utils;
-pub mod periods;
 
 // Native git operations (not available in WASM)
 #[cfg(not(target_arch = "wasm32"))]
@@ -15,9 +16,10 @@ pub use analyzer::{
 };
 pub use classifier::{FileClassifier, FileClassification, ContributionType};
 pub use exporters::{MarkdownExporter, LinkedInExporter, PortfolioExporter, BadgeExporter};
+pub use parser::GitLogParser;
+pub use periods::{DailyPeriod, WeeklyPeriod, MonthlyPeriod, QuarterlyPeriod};
 pub use traits::{Classifier, Analytics, Exporter, PeriodStrategy, ClassificationRule, ExportConfig};
 pub use utils::{format_number, contribution_type_label, sort_by_value, calculate_percentages};
-pub use periods::{DailyPeriod, WeeklyPeriod, MonthlyPeriod, QuarterlyPeriod};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use git::{analyze_repo, find_repos, is_git_repo, get_head_hash, AnalyzeOptions, GitError};

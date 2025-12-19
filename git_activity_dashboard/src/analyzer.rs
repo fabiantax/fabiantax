@@ -1,6 +1,7 @@
 use crate::classifier::{FileClassification, FileClassifier};
-use crate::traits::{Analytics, PeriodStrategy};
-use chrono::{DateTime, Datelike, Duration, Utc};
+use crate::periods::{DailyPeriod, WeeklyPeriod, MonthlyPeriod};
+use crate::traits::{Analytics, Classifier, PeriodStrategy};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -197,7 +198,8 @@ pub struct ParseOptions {
 pub struct GitAnalyzer {
     pub author_email: Option<String>,
     pub author_name: Option<String>,
-    classifier: FileClassifier,
+    /// Classifier for file analysis - uses trait for dependency injection
+    classifier: Box<dyn Classifier>,
     repos: Vec<RepoStats>,
     /// Cached total stats (invalidated on repo changes)
     cached_stats: Option<TotalStats>,
@@ -206,11 +208,21 @@ pub struct GitAnalyzer {
 }
 
 impl GitAnalyzer {
+    /// Create a new GitAnalyzer with default FileClassifier
     pub fn new(author_email: Option<String>, author_name: Option<String>) -> Self {
+        Self::new_with_classifier(author_email, author_name, Box::new(FileClassifier::new()))
+    }
+
+    /// Create a new GitAnalyzer with a custom classifier (Dependency Injection)
+    pub fn new_with_classifier(
+        author_email: Option<String>,
+        author_name: Option<String>,
+        classifier: Box<dyn Classifier>,
+    ) -> Self {
         Self {
             author_email,
             author_name,
-            classifier: FileClassifier::new(),
+            classifier,
             repos: Vec::new(),
             cached_stats: None,
             parse_options: ParseOptions::default(),
@@ -508,186 +520,15 @@ impl GitAnalyzer {
     }
 
     pub fn get_daily_activity(&self, days: u32) -> Vec<ActivitySummary> {
-        let now = Utc::now();
-        let mut summaries = Vec::with_capacity(days as usize);
-        let mut active_repos: HashSet<&String> = HashSet::new();
-
-        for i in 0..days {
-            let day = now - Duration::days(i as i64);
-            let start = day.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
-            let end = day.date_naive().and_hms_opt(23, 59, 59).unwrap().and_utc();
-
-            let mut summary = ActivitySummary {
-                period_start: start,
-                period_end: end,
-                period_label: day.format("%A, %b %d").to_string(),
-                commits: 0,
-                lines_added: 0,
-                lines_removed: 0,
-                files_changed: 0,
-                repos_active: 0,
-                contribution_breakdown: HashMap::new(),
-                language_breakdown: HashMap::new(),
-            };
-
-            active_repos.clear();
-
-            for repo in &self.repos {
-                for commit in &repo.commits {
-                    if commit.date >= start && commit.date <= end {
-                        summary.commits += 1;
-                        summary.lines_added += commit.lines_added;
-                        summary.lines_removed += commit.lines_removed;
-                        summary.files_changed += commit.files_changed;
-                        active_repos.insert(&repo.name);
-
-                        // Aggregate contribution types for this period
-                        for (ctype, lines) in &commit.contribution_types {
-                            *summary.contribution_breakdown.entry(ctype.clone()).or_insert(0) += lines;
-                        }
-
-                        // Aggregate languages for this period
-                        for (lang, lines) in &commit.languages {
-                            *summary.language_breakdown.entry(lang.clone()).or_insert(0) += lines;
-                        }
-                    }
-                }
-            }
-
-            summary.repos_active = active_repos.len() as u32;
-            summaries.push(summary);
-        }
-
-        summaries
+        self.aggregate_activity(&DailyPeriod, days)
     }
 
     pub fn get_weekly_activity(&self, weeks: u32) -> Vec<ActivitySummary> {
-        let now = Utc::now();
-        let mut summaries = Vec::with_capacity(weeks as usize);
-        let mut active_repos: HashSet<&String> = HashSet::new();
-
-        for i in 0..weeks {
-            let week_start = now - Duration::days((now.weekday().num_days_from_monday() + i * 7) as i64);
-            let start = week_start.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc();
-            let end = start + Duration::days(7) - Duration::seconds(1);
-
-            let mut summary = ActivitySummary {
-                period_start: start,
-                period_end: end,
-                period_label: format!("Week of {}", start.format("%b %d")),
-                commits: 0,
-                lines_added: 0,
-                lines_removed: 0,
-                files_changed: 0,
-                repos_active: 0,
-                contribution_breakdown: HashMap::new(),
-                language_breakdown: HashMap::new(),
-            };
-
-            active_repos.clear();
-
-            for repo in &self.repos {
-                for commit in &repo.commits {
-                    if commit.date >= start && commit.date <= end {
-                        summary.commits += 1;
-                        summary.lines_added += commit.lines_added;
-                        summary.lines_removed += commit.lines_removed;
-                        summary.files_changed += commit.files_changed;
-                        active_repos.insert(&repo.name);
-
-                        // Aggregate contribution types for this period
-                        for (ctype, lines) in &commit.contribution_types {
-                            *summary.contribution_breakdown.entry(ctype.clone()).or_insert(0) += lines;
-                        }
-
-                        // Aggregate languages for this period
-                        for (lang, lines) in &commit.languages {
-                            *summary.language_breakdown.entry(lang.clone()).or_insert(0) += lines;
-                        }
-                    }
-                }
-            }
-
-            summary.repos_active = active_repos.len() as u32;
-            summaries.push(summary);
-        }
-
-        summaries
+        self.aggregate_activity(&WeeklyPeriod, weeks)
     }
 
     pub fn get_monthly_activity(&self, months: u32) -> Vec<ActivitySummary> {
-        let now = Utc::now();
-        let mut summaries = Vec::with_capacity(months as usize);
-        let mut active_repos: HashSet<&String> = HashSet::new();
-
-        for i in 0..months {
-            let mut year = now.year();
-            let mut month = now.month() as i32 - i as i32;
-
-            while month <= 0 {
-                month += 12;
-                year -= 1;
-            }
-
-            let month = month as u32;
-            let start = chrono::NaiveDate::from_ymd_opt(year, month, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc();
-
-            let next_month = if month == 12 { 1 } else { month + 1 };
-            let next_year = if month == 12 { year + 1 } else { year };
-            let end = chrono::NaiveDate::from_ymd_opt(next_year, next_month, 1)
-                .unwrap()
-                .and_hms_opt(0, 0, 0)
-                .unwrap()
-                .and_utc() - Duration::seconds(1);
-
-            let month_name = start.format("%B %Y").to_string();
-
-            let mut summary = ActivitySummary {
-                period_start: start,
-                period_end: end,
-                period_label: month_name,
-                commits: 0,
-                lines_added: 0,
-                lines_removed: 0,
-                files_changed: 0,
-                repos_active: 0,
-                contribution_breakdown: HashMap::new(),
-                language_breakdown: HashMap::new(),
-            };
-
-            active_repos.clear();
-
-            for repo in &self.repos {
-                for commit in &repo.commits {
-                    if commit.date >= start && commit.date <= end {
-                        summary.commits += 1;
-                        summary.lines_added += commit.lines_added;
-                        summary.lines_removed += commit.lines_removed;
-                        summary.files_changed += commit.files_changed;
-                        active_repos.insert(&repo.name);
-
-                        // Aggregate contribution types for this period
-                        for (ctype, lines) in &commit.contribution_types {
-                            *summary.contribution_breakdown.entry(ctype.clone()).or_insert(0) += lines;
-                        }
-
-                        // Aggregate languages for this period
-                        for (lang, lines) in &commit.languages {
-                            *summary.language_breakdown.entry(lang.clone()).or_insert(0) += lines;
-                        }
-                    }
-                }
-            }
-
-            summary.repos_active = active_repos.len() as u32;
-            summaries.push(summary);
-        }
-
-        summaries
+        self.aggregate_activity(&MonthlyPeriod, months)
     }
 
     pub fn get_dashboard_data(&self) -> DashboardData {

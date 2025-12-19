@@ -16,8 +16,18 @@ fn type_label(ctype: &str) -> &'static str {
 pub struct MarkdownExporter;
 
 impl MarkdownExporter {
+    /// Static method for backward compatibility - delegates to trait implementation
     pub fn export(analyzer: &GitAnalyzer) -> String {
-        let stats = analyzer.get_total_stats();
+        let exporter = MarkdownExporter;
+        Exporter::export(&exporter, analyzer)
+    }
+}
+
+// Implement Exporter trait for MarkdownExporter - contains the full implementation
+impl Exporter for MarkdownExporter {
+    fn export(&self, analytics: &dyn Analytics) -> String {
+        let stats = analytics.total_stats();
+        let repos = analytics.repos();
         let mut lines = Vec::new();
 
         lines.push("# Git Activity Dashboard".to_string());
@@ -43,10 +53,7 @@ impl MarkdownExporter {
         lines.push("| Type | Lines | Percentage |".to_string());
         lines.push("|------|-------|------------|".to_string());
 
-        let mut sorted_types: Vec<_> = stats.contribution_types.iter().collect();
-        sorted_types.sort_by(|a, b| b.1.cmp(a.1));
-
-        for (ctype, count) in sorted_types {
+        for (ctype, count) in sort_by_value_ref(&stats.contribution_types) {
             let pct = stats.contribution_percentages.get(ctype).unwrap_or(&0.0);
             let label = type_label(ctype);
             lines.push(format!("| {} | {} | {}% |", label, fmt_num(*count), pct));
@@ -60,10 +67,7 @@ impl MarkdownExporter {
             lines.push("| Language | Lines | Percentage |".to_string());
             lines.push("|----------|-------|------------|".to_string());
 
-            let mut sorted_langs: Vec<_> = stats.languages.iter().collect();
-            sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
-
-            for (lang, count) in sorted_langs.iter().take(10) {
+            for (lang, count) in sort_by_value_ref(&stats.languages).iter().take(10) {
                 let pct = stats.language_percentages.get(*lang).unwrap_or(&0.0);
                 lines.push(format!("| {} | {} | {}% |", lang, fmt_num(**count), pct));
             }
@@ -77,10 +81,7 @@ impl MarkdownExporter {
             lines.push("| Extension | Lines | Percentage |".to_string());
             lines.push("|-----------|-------|------------|".to_string());
 
-            let mut sorted_exts: Vec<_> = stats.file_extensions.iter().collect();
-            sorted_exts.sort_by(|a, b| b.1.cmp(a.1));
-
-            for (ext, count) in sorted_exts.iter().take(15) {
+            for (ext, count) in sort_by_value_ref(&stats.file_extensions).iter().take(15) {
                 let pct = stats.file_extension_percentages.get(*ext).unwrap_or(&0.0);
                 lines.push(format!("| {} | {} | {}% |", ext, fmt_num(**count), pct));
             }
@@ -90,7 +91,7 @@ impl MarkdownExporter {
         // Weekly activity
         lines.push("## Weekly Activity".to_string());
         lines.push(String::new());
-        let weekly = analyzer.get_weekly_activity(4);
+        let weekly = analytics.weekly_activity(4);
         lines.push("| Week | Commits | Lines Changed | Repos |".to_string());
         lines.push("|------|---------|---------------|-------|".to_string());
         for week in weekly {
@@ -102,7 +103,7 @@ impl MarkdownExporter {
         // Monthly activity
         lines.push("## Monthly Activity".to_string());
         lines.push(String::new());
-        let monthly = analyzer.get_monthly_activity(6);
+        let monthly = analytics.monthly_activity(6);
         lines.push("| Month | Commits | Lines Changed | Repos |".to_string());
         lines.push("|-------|---------|---------------|-------|".to_string());
         for month in monthly {
@@ -115,7 +116,7 @@ impl MarkdownExporter {
         lines.push("## Repositories (detailed)".to_string());
         lines.push(String::new());
 
-        let mut repos: Vec<_> = analyzer.get_repos().to_vec();
+        let mut repos: Vec<_> = repos.to_vec();
         repos.sort_by(|a, b| b.total_commits.cmp(&a.total_commits));
 
         for repo in repos {
@@ -137,10 +138,8 @@ impl MarkdownExporter {
             // Per-repo contribution types
             if !repo.contribution_types.is_empty() {
                 lines.push("**Contribution Breakdown:**".to_string());
-                let mut sorted_types: Vec<_> = repo.contribution_types.iter().collect();
-                sorted_types.sort_by(|a, b| b.1.cmp(a.1));
-                let total: u32 = sorted_types.iter().map(|(_, c)| *c).sum();
-                for (ctype, count) in sorted_types.iter().take(5) {
+                let total: u32 = repo.contribution_types.values().sum();
+                for (ctype, count) in sort_by_value_ref(&repo.contribution_types).iter().take(5) {
                     let pct = if total > 0 { (**count as f64 / total as f64) * 100.0 } else { 0.0 };
                     lines.push(format!("- {}: {:.1}%", type_label(ctype), pct));
                 }
@@ -150,10 +149,8 @@ impl MarkdownExporter {
             // Per-repo languages
             if !repo.languages.is_empty() {
                 lines.push("**Languages:**".to_string());
-                let mut sorted_langs: Vec<_> = repo.languages.iter().collect();
-                sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
-                let total: u32 = sorted_langs.iter().map(|(_, c)| *c).sum();
-                for (lang, count) in sorted_langs.iter().take(5) {
+                let total: u32 = repo.languages.values().sum();
+                for (lang, count) in sort_by_value_ref(&repo.languages).iter().take(5) {
                     let pct = if total > 0 { (**count as f64 / total as f64) * 100.0 } else { 0.0 };
                     lines.push(format!("- {}: {:.1}%", lang, pct));
                 }
@@ -163,10 +160,8 @@ impl MarkdownExporter {
             // Per-repo file extensions
             if !repo.file_extensions.is_empty() {
                 lines.push("**File Types:**".to_string());
-                let mut sorted_exts: Vec<_> = repo.file_extensions.iter().collect();
-                sorted_exts.sort_by(|a, b| b.1.cmp(a.1));
-                let total: u32 = sorted_exts.iter().map(|(_, c)| *c).sum();
-                for (ext, count) in sorted_exts.iter().take(5) {
+                let total: u32 = repo.file_extensions.values().sum();
+                for (ext, count) in sort_by_value_ref(&repo.file_extensions).iter().take(5) {
                     let pct = if total > 0 { (**count as f64 / total as f64) * 100.0 } else { 0.0 };
                     lines.push(format!("- {}: {:.1}%", ext, pct));
                 }
@@ -175,51 +170,6 @@ impl MarkdownExporter {
 
             lines.push("---".to_string());
             lines.push(String::new());
-        }
-
-        lines.join("\n")
-    }
-}
-
-// Implement Exporter trait for MarkdownExporter
-impl Exporter for MarkdownExporter {
-    fn export(&self, analytics: &dyn Analytics) -> String {
-        // Create a temporary GitAnalyzer-like wrapper or use the analytics directly
-        // For now, we'll keep the static method for backward compatibility
-        // and implement this as a wrapper
-        let stats = analytics.total_stats();
-        let _repos = analytics.repos(); // Available for future use
-
-        let mut lines = Vec::new();
-        lines.push("# Git Activity Dashboard".to_string());
-        lines.push(String::new());
-        lines.push(format!("*Generated on {}*", Utc::now().format("%Y-%m-%d %H:%M")));
-        lines.push(String::new());
-        lines.push("## Overview".to_string());
-        lines.push(String::new());
-        lines.push("| Metric | Value |".to_string());
-        lines.push("|--------|-------|".to_string());
-        lines.push(format!("| Repositories | {} |", stats.total_repos));
-        lines.push(format!("| Total Commits | {} |", fmt_num(stats.total_commits)));
-        lines.push(format!("| Lines Added | {} |", fmt_num(stats.total_lines_added)));
-        lines.push(format!("| Lines Removed | {} |", fmt_num(stats.total_lines_removed)));
-        lines.push(String::new());
-
-        // Contribution breakdown
-        lines.push("## Contribution Breakdown".to_string());
-        lines.push(String::new());
-        for (ctype, count) in sort_by_value_ref(&stats.contribution_types).iter().take(10) {
-            let pct = stats.contribution_percentages.get(*ctype).unwrap_or(&0.0);
-            lines.push(format!("- **{}**: {} lines ({:.1}%)", type_label(ctype), fmt_num(**count), pct));
-        }
-        lines.push(String::new());
-
-        // Languages
-        lines.push("## Languages".to_string());
-        lines.push(String::new());
-        for (lang, _) in sort_by_value_ref(&stats.languages).iter().take(8) {
-            let pct = stats.language_percentages.get(*lang).unwrap_or(&0.0);
-            lines.push(format!("- **{}**: {:.1}%", lang, pct));
         }
 
         lines.join("\n")
@@ -237,9 +187,18 @@ impl Exporter for MarkdownExporter {
 pub struct LinkedInExporter;
 
 impl LinkedInExporter {
+    /// Static method for backward compatibility - delegates to trait implementation
     pub fn export(analyzer: &GitAnalyzer) -> String {
-        let stats = analyzer.get_total_stats();
-        let weekly = analyzer.get_weekly_activity(1);
+        let exporter = LinkedInExporter;
+        Exporter::export(&exporter, analyzer)
+    }
+}
+
+// Implement Exporter trait for LinkedInExporter - contains the full implementation
+impl Exporter for LinkedInExporter {
+    fn export(&self, analytics: &dyn Analytics) -> String {
+        let stats = analytics.total_stats();
+        let weekly = analytics.weekly_activity(1);
         let current_week = weekly.first();
 
         let mut lines = Vec::new();
@@ -279,39 +238,16 @@ impl LinkedInExporter {
 
         // Top languages
         if !stats.languages.is_empty() {
-            let mut sorted_langs: Vec<_> = stats.languages.iter().collect();
-            sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
-            let top_langs: Vec<_> = sorted_langs.iter().take(3).map(|(l, _)| l.as_str()).collect();
+            let top_langs: Vec<_> = sort_by_value_ref(&stats.languages)
+                .iter()
+                .take(3)
+                .map(|(l, _)| l.as_str())
+                .collect();
             lines.push(format!("Top Languages: {}", top_langs.join(", ")));
             lines.push(String::new());
         }
 
         lines.push("#coding #developer #programming #softwareengineering".to_string());
-
-        lines.join("\n")
-    }
-}
-
-// Implement Exporter trait for LinkedInExporter
-impl Exporter for LinkedInExporter {
-    fn export(&self, analytics: &dyn Analytics) -> String {
-        let stats = analytics.total_stats();
-        let weekly = analytics.weekly_activity(1);
-
-        let mut lines = Vec::new();
-        lines.push("My Developer Activity".to_string());
-        lines.push(String::new());
-
-        if let Some(week) = weekly.first() {
-            lines.push(format!("This week: {} commits, {} lines changed",
-                week.commits, week.lines_added + week.lines_removed));
-        }
-
-        lines.push(String::new());
-        lines.push(format!("Total: {} commits across {} repos",
-            stats.total_commits, stats.total_repos));
-        lines.push(String::new());
-        lines.push("#coding #developer #programming".to_string());
 
         lines.join("\n")
     }
@@ -328,8 +264,18 @@ impl Exporter for LinkedInExporter {
 pub struct PortfolioExporter;
 
 impl PortfolioExporter {
+    /// Static method for backward compatibility - delegates to trait implementation
     pub fn export(analyzer: &GitAnalyzer) -> String {
-        let stats = analyzer.get_total_stats();
+        let exporter = PortfolioExporter;
+        Exporter::export(&exporter, analyzer)
+    }
+}
+
+// Implement Exporter trait for PortfolioExporter - contains the full implementation
+impl Exporter for PortfolioExporter {
+    fn export(&self, analytics: &dyn Analytics) -> String {
+        let stats = analytics.total_stats();
+        let repos = analytics.repos();
         let mut lines = Vec::new();
 
         lines.push("# Project Portfolio".to_string());
@@ -350,11 +296,8 @@ impl PortfolioExporter {
             lines.push("## Technical Skills".to_string());
             lines.push(String::new());
 
-            let mut sorted_langs: Vec<_> = stats.languages.iter().collect();
-            sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
-            let total: u32 = sorted_langs.iter().map(|(_, c)| *c).sum();
-
-            for (lang, count) in sorted_langs.iter().take(10) {
+            let total: u32 = stats.languages.values().sum();
+            for (lang, count) in sort_by_value_ref(&stats.languages).iter().take(10) {
                 let pct = (**count as f64 / total as f64) * 100.0;
                 let bar_len = (pct / 5.0) as usize;
                 let bar: String = (0..bar_len).map(|_| '#').collect();
@@ -384,7 +327,7 @@ impl PortfolioExporter {
         lines.push("## Projects".to_string());
         lines.push(String::new());
 
-        let mut repos: Vec<_> = analyzer.get_repos().to_vec();
+        let mut repos: Vec<_> = repos.to_vec();
         repos.sort_by(|a, b| b.total_commits.cmp(&a.total_commits));
 
         for repo in repos {
@@ -415,39 +358,17 @@ impl PortfolioExporter {
             }
 
             if !repo.languages.is_empty() {
-                let mut sorted_langs: Vec<_> = repo.languages.iter().collect();
-                sorted_langs.sort_by(|a, b| b.1.cmp(a.1));
-                let top_langs: Vec<_> = sorted_langs.iter().take(3).map(|(l, _)| l.as_str()).collect();
+                let top_langs: Vec<_> = sort_by_value_ref(&repo.languages)
+                    .iter()
+                    .take(3)
+                    .map(|(l, _)| l.as_str())
+                    .collect();
                 lines.push(format!("- Primary languages: {}", top_langs.join(", ")));
             }
 
             lines.push(String::new());
             lines.push("---".to_string());
             lines.push(String::new());
-        }
-
-        lines.join("\n")
-    }
-}
-
-// Implement Exporter trait for PortfolioExporter
-impl Exporter for PortfolioExporter {
-    fn export(&self, analytics: &dyn Analytics) -> String {
-        let stats = analytics.total_stats();
-
-        let mut lines = Vec::new();
-        lines.push("# Project Portfolio".to_string());
-        lines.push(String::new());
-        lines.push(format!("**Total Projects:** {}", stats.total_repos));
-        lines.push(format!("**Total Commits:** {}", fmt_num(stats.total_commits)));
-        lines.push(format!("**Lines of Code:** {}", fmt_num(stats.total_lines_added)));
-        lines.push(String::new());
-
-        // Skills
-        lines.push("## Technical Skills".to_string());
-        for (lang, _) in sort_by_value_ref(&stats.languages).iter().take(8) {
-            let pct = stats.language_percentages.get(*lang).unwrap_or(&0.0);
-            lines.push(format!("- **{}**: {:.1}%", lang, pct));
         }
 
         lines.join("\n")
@@ -465,9 +386,18 @@ impl Exporter for PortfolioExporter {
 pub struct BadgeExporter;
 
 impl BadgeExporter {
+    /// Static method for backward compatibility - delegates to trait implementation
     pub fn export(analyzer: &GitAnalyzer) -> String {
-        let stats = analyzer.get_total_stats();
-        let weekly = analyzer.get_weekly_activity(1);
+        let exporter = BadgeExporter;
+        Exporter::export(&exporter, analyzer)
+    }
+}
+
+// Implement Exporter trait for BadgeExporter - contains the full implementation
+impl Exporter for BadgeExporter {
+    fn export(&self, analytics: &dyn Analytics) -> String {
+        let stats = analytics.total_stats();
+        let weekly = analytics.weekly_activity(1);
         let current_week = weekly.first();
 
         let mut lines = Vec::new();
@@ -511,26 +441,6 @@ impl BadgeExporter {
 
         lines.push("</div>".to_string());
         lines.push("<!-- End Git Activity Dashboard Widget -->".to_string());
-
-        lines.join("\n")
-    }
-}
-
-// Implement Exporter trait for BadgeExporter
-impl Exporter for BadgeExporter {
-    fn export(&self, analytics: &dyn Analytics) -> String {
-        let stats = analytics.total_stats();
-
-        let mut lines = Vec::new();
-        lines.push("<!-- Git Activity Dashboard Badge -->".to_string());
-        lines.push("<div align=\"center\">".to_string());
-        lines.push(String::new());
-        lines.push(format!("**{} commits** | **{} lines** | **{} repos**",
-            fmt_num(stats.total_commits),
-            fmt_num(stats.total_lines_added),
-            stats.total_repos));
-        lines.push(String::new());
-        lines.push("</div>".to_string());
 
         lines.join("\n")
     }
