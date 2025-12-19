@@ -1,0 +1,55 @@
+# Build artifacts
+/target/
+/pkg/
+
+# Cargo lock - keep for binary projects, ignore for libraries
+# Cargo.lock
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.*.sw?
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Rust specific
+**/*.rs.bk
+*.pdb
+
+# WASM build artifacts
+*.wasm
+*.wasm.map
+
+# Node.js (if using wasm-pack with bundler)
+node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+yarn.lock
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Test and coverage
+*.profraw
+*.profdata
+coverage/
+lcov.info
+tarpaulin-report.html
+
+# Generated documentation
+/doc/
+
+# Backup files
+*.bak
+*.orig
