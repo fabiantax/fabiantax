@@ -109,9 +109,13 @@ struct Cli {
     #[arg(long, value_name = "MONTH")]
     month: Option<String>,
 
-    /// Group stats by time period: week, week-repo, week-repo-filetype
+    /// Group stats by time period: week, week-filetype, week-repo, week-repo-filetype, month, month-filetype
     #[arg(long, value_name = "GROUPING")]
     group_by: Option<String>,
+
+    /// Limit number of periods to show (default: 20)
+    #[arg(long, value_name = "N")]
+    limit: Option<usize>,
 }
 
 fn print_summary(analyzer: &GitAnalyzer) {
@@ -387,7 +391,7 @@ fn main() {
                 Some(g) => g,
                 None => {
                     eprintln!("Invalid --group-by value: {}", group_by_str);
-                    eprintln!("Valid options: week, week-filetype, week-repo, week-repo-filetype");
+                    eprintln!("Valid options: week, week-filetype, week-repo, week-repo-filetype, month, month-filetype");
                     std::process::exit(1);
                 }
             };
@@ -422,7 +426,7 @@ fn main() {
             match client.get_weekly_stats(&filtered_repos, &grouping, &owner) {
                 Ok(weekly_stats) => {
                     if !cli.quiet {
-                        GitHubClient::print_weekly_stats(&weekly_stats, &grouping);
+                        GitHubClient::print_weekly_stats(&weekly_stats, &grouping, cli.limit);
                     }
 
                     // Export to JSON if requested

@@ -111,6 +111,8 @@ pub enum StatsGrouping {
     WeekFileType,
     WeekRepo,
     WeekRepoFileType,
+    Month,
+    MonthFileType,
 }
 
 impl StatsGrouping {
@@ -120,6 +122,8 @@ impl StatsGrouping {
             "week-filetype" | "weekfiletype" | "week-file" => Some(Self::WeekFileType),
             "week-repo" | "weekrepo" => Some(Self::WeekRepo),
             "week-repo-filetype" | "weekrepofiletype" | "week-repo-file" => Some(Self::WeekRepoFileType),
+            "month" => Some(Self::Month),
+            "month-filetype" | "monthfiletype" | "month-file" => Some(Self::MonthFileType),
             _ => None,
         }
     }
@@ -165,16 +169,30 @@ impl GitHubCache {
     }
 
     pub fn get(&self, repo: &str) -> Option<CachedRepoCommits> {
+        use chrono::{Datelike, Utc};
+
         let path = self.cache_path(repo);
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(cached) = serde_json::from_str::<CachedRepoCommits>(&content) {
-                    // Check if cache is less than 1 hour old
-                    if let Ok(fetched) = chrono::DateTime::parse_from_rfc3339(&cached.fetched_at) {
-                        let age = chrono::Utc::now().signed_duration_since(fetched);
-                        if age.num_hours() < 1 {
-                            return Some(cached);
+                    // Get current week
+                    let now = Utc::now();
+                    let current_week = format!("{}-W{:02}", now.iso_week().year(), now.iso_week().week());
+
+                    // Check if cache has any commits from current week
+                    let has_current_week = cached.commits.iter().any(|c| c.week == current_week);
+
+                    if has_current_week {
+                        // If cache has current week data, only use if less than 1 hour old
+                        if let Ok(fetched) = chrono::DateTime::parse_from_rfc3339(&cached.fetched_at) {
+                            let age = now.signed_duration_since(fetched);
+                            if age.num_hours() < 1 {
+                                return Some(cached);
+                            }
                         }
+                    } else {
+                        // Old commits never change - cache indefinitely
+                        return Some(cached);
                     }
                 }
             }
@@ -1099,13 +1117,49 @@ impl GitHubClient {
         Ok(result)
     }
 
+    /// Convert week string (YYYY-Www) to month string (YYYY-MM)
+    fn week_to_month(week: &str) -> String {
+        // Parse week like "2025-W51" and convert to "2025-12"
+        if let Some(caps) = week.strip_prefix("20").and_then(|s| {
+            let parts: Vec<&str> = s.split("-W").collect();
+            if parts.len() == 2 {
+                Some((parts[0], parts[1]))
+            } else {
+                None
+            }
+        }) {
+            let year = format!("20{}", caps.0);
+            if let Ok(week_num) = caps.1.parse::<u32>() {
+                // Approximate month from week number
+                let month = match week_num {
+                    1..=4 => 1,
+                    5..=8 => 2,
+                    9..=13 => 3,
+                    14..=17 => 4,
+                    18..=22 => 5,
+                    23..=26 => 6,
+                    27..=30 => 7,
+                    31..=35 => 8,
+                    36..=39 => 9,
+                    40..=44 => 10,
+                    45..=48 => 11,
+                    _ => 12,
+                };
+                return format!("{}-{:02}", year, month);
+            }
+        }
+        week.to_string()
+    }
+
     /// Print weekly stats with specified grouping
-    pub fn print_weekly_stats(stats: &[WeeklyRepoStats], grouping: &StatsGrouping) {
+    pub fn print_weekly_stats(stats: &[WeeklyRepoStats], grouping: &StatsGrouping, limit: Option<usize>) {
         use std::collections::HashMap;
 
-        println!("\n{}", "=".repeat(70));
-        println!("WEEKLY ACTIVITY BREAKDOWN");
-        println!("{}", "=".repeat(70));
+        let period_limit = limit.unwrap_or(20);
+
+        println!("\n{}", "=".repeat(80));
+        println!("ACTIVITY BREAKDOWN");
+        println!("{}", "=".repeat(80));
 
         match grouping {
             StatsGrouping::Week => {
@@ -1121,12 +1175,74 @@ impl GitHubClient {
                 let mut sorted: Vec<_> = weekly.into_iter().collect();
                 sorted.sort_by(|a, b| b.0.cmp(&a.0));
 
-                println!("\n{:15} {:>10} {:>12} {:>12}", "Week", "Commits", "Additions", "Deletions");
-                println!("{}", "-".repeat(50));
+                println!("\n{:12} {:>8} {:>12} {:>12} {:>12}", "Week", "Commits", "Additions", "Deletions", "Net LOC");
+                println!("{}", "-".repeat(60));
 
-                for (week, (commits, additions, deletions)) in sorted.iter().take(20) {
-                    let bar = "█".repeat(std::cmp::min(*commits as usize, 30));
-                    println!("{:15} {:>10} {:>+12} {:>-12}  {}", week, commits, additions, deletions, bar);
+                for (week, (commits, additions, deletions)) in sorted.iter().take(period_limit) {
+                    let net = *additions as i64 - *deletions as i64;
+                    let bar = "█".repeat(std::cmp::min(*commits as usize, 20));
+                    println!("{:12} {:>8} {:>+12} {:>12} {:>+12}  {}", week, commits, additions, deletions, net, bar);
+                }
+            }
+
+            StatsGrouping::Month => {
+                // Aggregate by month
+                let mut monthly: HashMap<String, (u64, u64, u64)> = HashMap::new();
+                for s in stats {
+                    let month = Self::week_to_month(&s.week);
+                    let entry = monthly.entry(month).or_insert((0, 0, 0));
+                    entry.0 += s.commits;
+                    entry.1 += s.additions;
+                    entry.2 += s.deletions;
+                }
+
+                let mut sorted: Vec<_> = monthly.into_iter().collect();
+                sorted.sort_by(|a, b| b.0.cmp(&a.0));
+
+                println!("\n{:12} {:>8} {:>12} {:>12} {:>12}", "Month", "Commits", "Additions", "Deletions", "Net LOC");
+                println!("{}", "-".repeat(60));
+
+                for (month, (commits, additions, deletions)) in sorted.iter().take(period_limit) {
+                    let net = *additions as i64 - *deletions as i64;
+                    let bar = "█".repeat(std::cmp::min((*commits / 10) as usize, 20));
+                    println!("{:12} {:>8} {:>+12} {:>12} {:>+12}  {}", month, commits, additions, deletions, net, bar);
+                }
+            }
+
+            StatsGrouping::MonthFileType => {
+                // Aggregate by month and file type
+                let mut monthly_filetypes: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+                for s in stats {
+                    let month = Self::week_to_month(&s.week);
+                    let month_entry = monthly_filetypes.entry(month).or_insert_with(HashMap::new);
+                    for (ext, ft) in &s.file_types {
+                        let entry = month_entry.entry(ext.clone()).or_insert((0, 0, 0));
+                        entry.0 += ft.commits;
+                        entry.1 += ft.additions;
+                        entry.2 += ft.deletions;
+                    }
+                }
+
+                let mut sorted_months: Vec<_> = monthly_filetypes.keys().cloned().collect();
+                sorted_months.sort_by(|a, b| b.cmp(a));
+
+                for month in sorted_months.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
+                    println!("Month: {}", month);
+                    println!("{}", "-".repeat(80));
+                    println!("{:15} {:>10} {:>12} {:>12} {:>12}", "File Type", "Changes", "Additions", "Deletions", "Net LOC");
+
+                    if let Some(filetypes) = monthly_filetypes.get(month) {
+                        let mut sorted_types: Vec<_> = filetypes.iter().collect();
+                        sorted_types.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+
+                        for (ext, (changes, additions, deletions)) in sorted_types.iter().take(15) {
+                            let net = *additions as i64 - *deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(*changes as usize, 15));
+                            println!(".{:14} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                ext, changes, additions, deletions, net, bar);
+                        }
+                    }
                 }
             }
 
@@ -1146,20 +1262,21 @@ impl GitHubClient {
                 let mut sorted_weeks: Vec<_> = weekly_filetypes.keys().cloned().collect();
                 sorted_weeks.sort_by(|a, b| b.cmp(a));
 
-                for week in sorted_weeks.iter().take(12) {
-                    println!("\n{}", "-".repeat(70));
+                for week in sorted_weeks.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
                     println!("Week: {}", week);
-                    println!("{}", "-".repeat(70));
-                    println!("{:20} {:>10} {:>12} {:>12}", "File Type", "Changes", "Additions", "Deletions");
+                    println!("{}", "-".repeat(80));
+                    println!("{:15} {:>10} {:>12} {:>12} {:>12}", "File Type", "Changes", "Additions", "Deletions", "Net LOC");
 
                     if let Some(filetypes) = weekly_filetypes.get(week) {
                         let mut sorted_types: Vec<_> = filetypes.iter().collect();
                         sorted_types.sort_by(|a, b| b.1.0.cmp(&a.1.0));
 
                         for (ext, (changes, additions, deletions)) in sorted_types.iter().take(15) {
-                            let bar = "█".repeat(std::cmp::min(*changes as usize, 20));
-                            println!(".{:19} {:>10} {:>+12} {:>-12}  {}",
-                                ext, changes, additions, deletions, bar);
+                            let net = *additions as i64 - *deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(*changes as usize, 15));
+                            println!(".{:14} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                ext, changes, additions, deletions, net, bar);
                         }
                     }
                 }
@@ -1175,20 +1292,21 @@ impl GitHubClient {
                 let mut sorted_weeks: Vec<_> = by_week.keys().cloned().collect();
                 sorted_weeks.sort_by(|a, b| b.cmp(a));
 
-                for week in sorted_weeks.iter().take(12) {
-                    println!("\n{}", "-".repeat(70));
+                for week in sorted_weeks.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
                     println!("Week: {}", week);
-                    println!("{}", "-".repeat(70));
-                    println!("{:30} {:>10} {:>12} {:>12}", "Repository", "Commits", "Additions", "Deletions");
+                    println!("{}", "-".repeat(80));
+                    println!("{:25} {:>8} {:>12} {:>12} {:>12}", "Repository", "Commits", "Additions", "Deletions", "Net LOC");
 
                     if let Some(repos) = by_week.get(week) {
                         let mut sorted_repos = repos.clone();
                         sorted_repos.sort_by(|a, b| b.commits.cmp(&a.commits));
 
                         for repo in sorted_repos.iter().take(10) {
-                            let bar = "█".repeat(std::cmp::min(repo.commits as usize, 20));
-                            println!("{:30} {:>10} {:>+12} {:>-12}  {}",
-                                repo.repo, repo.commits, repo.additions, repo.deletions, bar);
+                            let net = repo.additions as i64 - repo.deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(repo.commits as usize, 15));
+                            println!("{:25} {:>8} {:>+12} {:>12} {:>+12}  {}",
+                                repo.repo, repo.commits, repo.additions, repo.deletions, net, bar);
                         }
                     }
                 }
@@ -1204,18 +1322,19 @@ impl GitHubClient {
                 let mut sorted_weeks: Vec<_> = by_week.keys().cloned().collect();
                 sorted_weeks.sort_by(|a, b| b.cmp(a));
 
-                for week in sorted_weeks.iter().take(8) {
-                    println!("\n{}", "=".repeat(70));
+                for week in sorted_weeks.iter().take(period_limit) {
+                    println!("\n{}", "=".repeat(80));
                     println!("Week: {}", week);
-                    println!("{}", "=".repeat(70));
+                    println!("{}", "=".repeat(80));
 
                     if let Some(repos) = by_week.get(week) {
                         let mut sorted_repos = repos.clone();
                         sorted_repos.sort_by(|a, b| b.commits.cmp(&a.commits));
 
                         for repo in sorted_repos.iter().take(5) {
-                            println!("\n  {} ({} commits, +{} -{}):",
-                                repo.repo, repo.commits, repo.additions, repo.deletions);
+                            let net = repo.additions as i64 - repo.deletions as i64;
+                            println!("\n  {} ({} commits, +{} -{} = {} net):",
+                                repo.repo, repo.commits, repo.additions, repo.deletions, net);
 
                             let mut sorted_types: Vec<_> = repo.file_types.iter().collect();
                             sorted_types.sort_by(|a, b| b.1.commits.cmp(&a.1.commits));
@@ -1229,7 +1348,7 @@ impl GitHubClient {
             }
         }
 
-        println!("\n{}\n", "=".repeat(70));
+        println!("\n{}\n", "=".repeat(80));
     }
 
     /// Clone a repository to the specified directory
