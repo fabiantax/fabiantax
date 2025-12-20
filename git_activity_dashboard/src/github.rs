@@ -4,6 +4,7 @@
 //! - List all repositories for an authenticated user or specific username
 //! - Clone repositories that don't exist locally
 //! - Skip already-cloned repositories for efficiency
+//! - Cache API responses for faster subsequent runs
 
 use git2::{Cred, FetchOptions, RemoteCallbacks};
 use reqwest::blocking::Client;
@@ -11,6 +12,8 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
+use std::fs;
+use std::collections::HashMap;
 
 /// GitHub repository metadata from the API
 #[derive(Debug, Deserialize, Clone)]
@@ -105,6 +108,7 @@ pub struct FileTypeWeeklyStats {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StatsGrouping {
     Week,
+    WeekFileType,
     WeekRepo,
     WeekRepoFileType,
 }
@@ -113,9 +117,75 @@ impl StatsGrouping {
     pub fn from_str(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "week" => Some(Self::Week),
+            "week-filetype" | "weekfiletype" | "week-file" => Some(Self::WeekFileType),
             "week-repo" | "weekrepo" => Some(Self::WeekRepo),
             "week-repo-filetype" | "weekrepofiletype" | "week-repo-file" => Some(Self::WeekRepoFileType),
             _ => None,
+        }
+    }
+}
+
+/// Cached commit data for a repository
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedRepoCommits {
+    pub repo: String,
+    pub fetched_at: String,
+    pub commits: Vec<CachedCommit>,
+}
+
+/// Cached commit details
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CachedCommit {
+    pub sha: String,
+    pub week: String,
+    pub additions: u64,
+    pub deletions: u64,
+    pub file_extensions: Vec<String>,
+}
+
+/// Cache manager for GitHub API responses
+pub struct GitHubCache {
+    cache_dir: PathBuf,
+}
+
+impl GitHubCache {
+    pub fn new() -> Self {
+        let cache_dir = dirs::cache_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("git-activity-dashboard");
+
+        // Create cache directory if it doesn't exist
+        fs::create_dir_all(&cache_dir).ok();
+
+        Self { cache_dir }
+    }
+
+    fn cache_path(&self, repo: &str) -> PathBuf {
+        self.cache_dir.join(format!("{}.json", repo.replace('/', "_")))
+    }
+
+    pub fn get(&self, repo: &str) -> Option<CachedRepoCommits> {
+        let path = self.cache_path(repo);
+        if path.exists() {
+            if let Ok(content) = fs::read_to_string(&path) {
+                if let Ok(cached) = serde_json::from_str::<CachedRepoCommits>(&content) {
+                    // Check if cache is less than 1 hour old
+                    if let Ok(fetched) = chrono::DateTime::parse_from_rfc3339(&cached.fetched_at) {
+                        let age = chrono::Utc::now().signed_duration_since(fetched);
+                        if age.num_hours() < 1 {
+                            return Some(cached);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn set(&self, repo: &str, commits: &CachedRepoCommits) {
+        let path = self.cache_path(repo);
+        if let Ok(json) = serde_json::to_string_pretty(commits) {
+            fs::write(path, json).ok();
         }
     }
 }
@@ -758,28 +828,45 @@ impl GitHubClient {
         Ok(activity)
     }
 
-    /// Fetch commit stats (additions/deletions) for a repository within a date range
-    pub fn get_repo_commits_stats(&self, owner: &str, repo: &str, since: Option<&str>, until: Option<&str>) -> Result<Vec<(String, u64, u64, u64, Vec<String>)>, String> {
+    /// Fetch commit stats (additions/deletions) for a repository with caching
+    pub fn get_repo_commits_stats(&self, owner: &str, repo: &str, _since: Option<&str>, _until: Option<&str>) -> Result<Vec<(String, u64, u64, u64, Vec<String>)>, String> {
         // Returns: (week, commits, additions, deletions, file_extensions)
         use chrono::{DateTime, Datelike, Utc};
-        use std::collections::HashMap;
 
+        let cache = GitHubCache::new();
+        let repo_key = format!("{}/{}", owner, repo);
+
+        // Check cache first
+        if let Some(cached) = cache.get(&repo_key) {
+            // Convert cached data to result format
+            let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>)> = HashMap::new();
+            for commit in cached.commits {
+                let entry = weekly_stats.entry(commit.week.clone()).or_insert((0, 0, 0, Vec::new()));
+                entry.0 += 1;
+                entry.1 += commit.additions;
+                entry.2 += commit.deletions;
+                entry.3.extend(commit.file_extensions);
+            }
+            let mut result: Vec<_> = weekly_stats
+                .into_iter()
+                .map(|(week, (commits, additions, deletions, exts))| {
+                    (week, commits, additions, deletions, exts)
+                })
+                .collect();
+            result.sort_by(|a, b| b.0.cmp(&a.0));
+            return Ok(result);
+        }
+
+        // Fetch from API
         let mut all_commits = Vec::new();
         let mut page = 1;
         let per_page = 100;
 
         loop {
-            let mut url = format!(
+            let url = format!(
                 "https://api.github.com/repos/{}/{}/commits?per_page={}&page={}",
                 owner, repo, per_page, page
             );
-
-            if let Some(s) = since {
-                url.push_str(&format!("&since={}", s));
-            }
-            if let Some(u) = until {
-                url.push_str(&format!("&until={}", u));
-            }
 
             let mut request = self
                 .client
@@ -837,6 +924,7 @@ impl GitHubClient {
 
         // Group by week and fetch stats for each commit
         let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>)> = HashMap::new();
+        let mut cached_commits = Vec::new();
 
         for (sha, date_str) in all_commits.iter().take(100) { // Limit API calls
             // Parse date and get week
@@ -884,12 +972,13 @@ impl GitHubClient {
                     }
 
                     if let Ok(commit_data) = response.json::<CommitStats>() {
-                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new()));
-                        entry.0 += 1; // commits
+                        let mut additions = 0u64;
+                        let mut deletions = 0u64;
+                        let mut file_exts = Vec::new();
 
                         if let Some(stats) = commit_data.stats {
-                            entry.1 += stats.additions;
-                            entry.2 += stats.deletions;
+                            additions = stats.additions;
+                            deletions = stats.deletions;
                         }
 
                         if let Some(files) = commit_data.files {
@@ -898,14 +987,38 @@ impl GitHubClient {
                                     .extension()
                                     .and_then(|e| e.to_str())
                                 {
-                                    entry.3.push(ext.to_string());
+                                    file_exts.push(ext.to_string());
                                 }
                             }
                         }
+
+                        // Store in weekly stats
+                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new()));
+                        entry.0 += 1;
+                        entry.1 += additions;
+                        entry.2 += deletions;
+                        entry.3.extend(file_exts.clone());
+
+                        // Store for cache
+                        cached_commits.push(CachedCommit {
+                            sha: sha.clone(),
+                            week,
+                            additions,
+                            deletions,
+                            file_extensions: file_exts,
+                        });
                     }
                 }
             }
         }
+
+        // Save to cache
+        let cached_data = CachedRepoCommits {
+            repo: repo_key.clone(),
+            fetched_at: chrono::Utc::now().to_rfc3339(),
+            commits: cached_commits,
+        };
+        cache.set(&repo_key, &cached_data);
 
         // Convert to sorted vector
         let mut result: Vec<_> = weekly_stats
@@ -1014,6 +1127,41 @@ impl GitHubClient {
                 for (week, (commits, additions, deletions)) in sorted.iter().take(20) {
                     let bar = "█".repeat(std::cmp::min(*commits as usize, 30));
                     println!("{:15} {:>10} {:>+12} {:>-12}  {}", week, commits, additions, deletions, bar);
+                }
+            }
+
+            StatsGrouping::WeekFileType => {
+                // Aggregate by week and file type (across all repos)
+                let mut weekly_filetypes: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+                for s in stats {
+                    let week_entry = weekly_filetypes.entry(s.week.clone()).or_insert_with(HashMap::new);
+                    for (ext, ft) in &s.file_types {
+                        let entry = week_entry.entry(ext.clone()).or_insert((0, 0, 0));
+                        entry.0 += ft.commits;
+                        entry.1 += ft.additions;
+                        entry.2 += ft.deletions;
+                    }
+                }
+
+                let mut sorted_weeks: Vec<_> = weekly_filetypes.keys().cloned().collect();
+                sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+                for week in sorted_weeks.iter().take(12) {
+                    println!("\n{}", "-".repeat(70));
+                    println!("Week: {}", week);
+                    println!("{}", "-".repeat(70));
+                    println!("{:20} {:>10} {:>12} {:>12}", "File Type", "Changes", "Additions", "Deletions");
+
+                    if let Some(filetypes) = weekly_filetypes.get(week) {
+                        let mut sorted_types: Vec<_> = filetypes.iter().collect();
+                        sorted_types.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+
+                        for (ext, (changes, additions, deletions)) in sorted_types.iter().take(15) {
+                            let bar = "█".repeat(std::cmp::min(*changes as usize, 20));
+                            println!(".{:19} {:>10} {:>+12} {:>-12}  {}",
+                                ext, changes, additions, deletions, bar);
+                        }
+                    }
                 }
             }
 

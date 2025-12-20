@@ -387,7 +387,7 @@ fn main() {
                 Some(g) => g,
                 None => {
                     eprintln!("Invalid --group-by value: {}", group_by_str);
-                    eprintln!("Valid options: week, week-repo, week-repo-filetype");
+                    eprintln!("Valid options: week, week-filetype, week-repo, week-repo-filetype");
                     std::process::exit(1);
                 }
             };
