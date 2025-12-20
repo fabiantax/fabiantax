@@ -7,6 +7,7 @@
 //! - Cache API responses for faster subsequent runs
 
 use git2::{Cred, FetchOptions, RemoteCallbacks};
+use ignore::gitignore::Gitignore;
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::collections::HashMap;
+
+use crate::git::load_gitignore;
 
 /// GitHub repository metadata from the API
 #[derive(Debug, Deserialize, Clone)]
@@ -421,7 +424,10 @@ impl SnapshotStats {
         let mut categories: HashMap<String, (u64, u64)> = HashMap::new();
         let mut languages: HashMap<String, (u64, u64)> = HashMap::new();
 
-        Self::walk_directory(repo_path, repo_path, &mut |rel_path, file_lines| {
+        // Load gitignore patterns for this repo
+        let gitignore = load_gitignore(repo_path);
+
+        Self::walk_directory(repo_path, repo_path, gitignore.as_ref(), &mut |rel_path, file_lines| {
             let category = FileCategory::from_path(rel_path);
             if category.is_excluded() {
                 return; // Skip excluded files
@@ -454,7 +460,7 @@ impl SnapshotStats {
         }
     }
 
-    fn walk_directory<F>(base: &Path, dir: &Path, callback: &mut F)
+    fn walk_directory<F>(base: &Path, dir: &Path, gitignore: Option<&Gitignore>, callback: &mut F)
     where
         F: FnMut(&str, u64),
     {
@@ -468,27 +474,27 @@ impl SnapshotStats {
             let file_name = entry.file_name();
             let name = file_name.to_string_lossy();
 
-            // Skip hidden files/dirs and common excluded directories
-            if name.starts_with('.')
-                || name == "node_modules"
-                || name == "vendor"
-                || name == "target"
-                || name == "dist"
-                || name == "build"
-                || name == "__pycache__"
-            {
+            // Skip hidden files/dirs
+            if name.starts_with('.') {
                 continue;
             }
 
-            if path.is_dir() {
-                Self::walk_directory(base, &path, callback);
-            } else if path.is_file() {
-                let rel_path = path
-                    .strip_prefix(base)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .to_string();
+            // Check gitignore patterns
+            let rel_path = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
 
+            if let Some(gi) = gitignore {
+                if gi.matched(&rel_path, path.is_dir()).is_ignore() {
+                    continue;
+                }
+            }
+
+            if path.is_dir() {
+                Self::walk_directory(base, &path, gitignore, callback);
+            } else if path.is_file() {
                 // Count lines in file
                 let line_count = Self::count_lines(&path);
                 callback(&rel_path, line_count);

@@ -26,7 +26,7 @@ pub use traits::{Classifier, Analytics, Exporter, PeriodStrategy, Classification
 pub use utils::{format_number, contribution_type_label, sort_by_value, calculate_percentages};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use git::{analyze_repo, find_repos, is_git_repo, get_head_hash, AnalyzeOptions, GitError};
+pub use git::{analyze_repo, find_repos, is_git_repo, get_head_hash, load_gitignore, AnalyzeOptions, GitError};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use github::{
