@@ -164,25 +164,121 @@ pub enum FileCategory {
     Specs,     // specs/, spec/, specifications/, schemas/
     Tests,     // tests/, test/, __tests__/, *_test.*, *_spec.*
     Config,    // .json, .yaml, .toml in root or config/
+    CI,        // .github/, .gitlab-ci.yml, Jenkinsfile, etc.
+    Generated, // dist/, build/, node_modules/, vendor/, lock files
+    Assets,    // images/, assets/, static/, public/
     Code,      // Everything else
+    Excluded,  // Files to exclude from stats entirely
 }
 
 impl FileCategory {
     pub fn from_path(path: &str) -> Self {
         let path_lower = path.to_lowercase();
+        let filename = std::path::Path::new(path)
+            .file_name()
+            .and_then(|f| f.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
-        // Check folder patterns
+        // EXCLUDED: Lock files and dependency folders (these inflate stats massively)
+        if filename == "package-lock.json"
+            || filename == "yarn.lock"
+            || filename == "pnpm-lock.yaml"
+            || filename == "cargo.lock"
+            || filename == "gemfile.lock"
+            || filename == "poetry.lock"
+            || filename == "composer.lock"
+            || path_lower.contains("/node_modules/")
+            || path_lower.contains("/vendor/")
+            || path_lower.starts_with("node_modules/")
+            || path_lower.starts_with("vendor/")
+        {
+            return Self::Excluded;
+        }
+
+        // GENERATED: Build outputs and generated code
+        if path_lower.contains("/dist/")
+            || path_lower.contains("/build/")
+            || path_lower.contains("/out/")
+            || path_lower.contains("/.next/")
+            || path_lower.contains("/target/")
+            || path_lower.contains("/__pycache__/")
+            || path_lower.contains("/bin/debug/")
+            || path_lower.contains("/bin/release/")
+            || path_lower.contains("/obj/")
+            || path_lower.starts_with("dist/")
+            || path_lower.starts_with("build/")
+            || path_lower.starts_with("out/")
+            || path_lower.starts_with(".next/")
+            || path_lower.starts_with("target/")
+            || path_lower.starts_with("__pycache__/")
+            || path_lower.starts_with("obj/")
+            || path_lower.starts_with("bin/debug/")   // C#
+            || path_lower.starts_with("bin/release/") // C#
+            || filename.ends_with(".min.js")
+            || filename.ends_with(".min.css")
+            || filename.ends_with(".bundle.js")
+        {
+            return Self::Generated;
+        }
+
+        // CI/CD: Continuous integration and deployment
+        if path_lower.contains("/.github/")
+            || path_lower.contains("/.gitlab/")
+            || path_lower.starts_with(".github/")
+            || path_lower.starts_with(".gitlab/")
+            || path_lower.starts_with(".circleci/")
+            || filename == ".gitlab-ci.yml"
+            || filename == "jenkinsfile"
+            || filename == ".travis.yml"
+            || filename == "azure-pipelines.yml"
+            || filename == "bitbucket-pipelines.yml"
+            || path_lower.contains("/.circleci/")
+        {
+            return Self::CI;
+        }
+
+        // ASSETS: Images, fonts, static files
+        if path_lower.contains("/assets/")
+            || path_lower.contains("/images/")
+            || path_lower.contains("/static/")
+            || path_lower.contains("/public/")
+            || path_lower.contains("/fonts/")
+            || path_lower.contains("/media/")
+            || path_lower.starts_with("assets/")
+            || path_lower.starts_with("images/")
+            || path_lower.starts_with("static/")
+            || path_lower.starts_with("public/")
+        {
+            let ext = std::path::Path::new(path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+            // Only count actual asset files, not code in these folders
+            if matches!(ext, "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico" | "webp"
+                | "woff" | "woff2" | "ttf" | "eot" | "otf" | "mp3" | "mp4" | "wav" | "pdf") {
+                return Self::Assets;
+            }
+        }
+
+        // DOCS: Documentation
         if path_lower.contains("/docs/")
             || path_lower.contains("/documentation/")
             || path_lower.starts_with("docs/")
             || path_lower.starts_with("documentation/")
-            || path_lower.contains("readme")
-            || path_lower.contains("changelog")
-            || path_lower.contains("contributing")
+            || filename == "readme.md"
+            || filename == "readme"
+            || filename == "changelog.md"
+            || filename == "changelog"
+            || filename == "contributing.md"
+            || filename == "contributing"
+            || filename == "license.md"
+            || filename == "license"
         {
             return Self::Docs;
         }
 
+        // SPECS: API specs, schemas
         if path_lower.contains("/specs/")
             || path_lower.contains("/spec/")
             || path_lower.contains("/specifications/")
@@ -190,24 +286,34 @@ impl FileCategory {
             || path_lower.contains("/schema/")
             || path_lower.starts_with("specs/")
             || path_lower.starts_with("spec/")
+            || path_lower.starts_with("schemas/")
+            || path_lower.starts_with("schema/")
+            || path_lower.starts_with("specifications/")
+            || filename == "openapi.yaml"
+            || filename == "openapi.json"
+            || filename == "swagger.yaml"
+            || filename == "swagger.json"
         {
             return Self::Specs;
         }
 
+        // TESTS: Test files
         if path_lower.contains("/tests/")
             || path_lower.contains("/test/")
             || path_lower.contains("/__tests__/")
-            || path_lower.contains("_test.")
-            || path_lower.contains("_spec.")
-            || path_lower.contains(".test.")
-            || path_lower.contains(".spec.")
+            || path_lower.contains("/_tests/")
             || path_lower.starts_with("tests/")
             || path_lower.starts_with("test/")
+            || filename.contains("_test.")
+            || filename.contains("_spec.")
+            || filename.contains(".test.")
+            || filename.contains(".spec.")
+            || filename.starts_with("test_")  // Python: test_*.py
         {
             return Self::Tests;
         }
 
-        // Config files in root or config folders
+        // CONFIG: Configuration files in root or config folders
         let ext = std::path::Path::new(path)
             .extension()
             .and_then(|e| e.to_str())
@@ -217,7 +323,27 @@ impl FileCategory {
             && (path_lower.contains("/config/")
                 || path_lower.contains("/configuration/")
                 || !path.contains("/")  // Root level
-                || path_lower.starts_with("config/"))
+                || path_lower.starts_with("config/")
+                || path_lower.starts_with("configuration/"))
+        {
+            return Self::Config;
+        }
+
+        // Also catch common config files by name
+        if filename == "tsconfig.json"
+            || filename == "jsconfig.json"
+            || filename == "eslintrc.json"
+            || filename == ".eslintrc.json"
+            || filename == ".prettierrc"
+            || filename == "prettier.config.js"
+            || filename == "babel.config.js"
+            || filename == ".babelrc"
+            || filename == "webpack.config.js"
+            || filename == "vite.config.ts"
+            || filename == "vite.config.js"
+            || filename == "next.config.js"
+            || filename == "tailwind.config.js"
+            || filename == "postcss.config.js"
         {
             return Self::Config;
         }
@@ -231,8 +357,17 @@ impl FileCategory {
             Self::Specs => "specs",
             Self::Tests => "tests",
             Self::Config => "config",
+            Self::CI => "ci",
+            Self::Generated => "generated",
+            Self::Assets => "assets",
             Self::Code => "code",
+            Self::Excluded => "excluded",
         }
+    }
+
+    /// Returns true if this category should be excluded from stats
+    pub fn is_excluded(&self) -> bool {
+        matches!(self, Self::Excluded)
     }
 }
 
@@ -257,7 +392,7 @@ impl GitHubCache {
         self.cache_dir.join(format!("{}.json", repo.replace('/', "_")))
     }
 
-    const CACHE_VERSION: u32 = 2; // Increment when cache format changes
+    const CACHE_VERSION: u32 = 3; // Increment when cache format changes
 
     pub fn get(&self, repo: &str) -> Option<CachedRepoCommits> {
         use chrono::{Datelike, Utc};
@@ -1452,26 +1587,29 @@ impl GitHubClient {
             }
 
             StatsGrouping::WeekCategory => {
-                // Aggregate by week and file category (docs, specs, tests, config, code)
+                // Aggregate by week and file category (docs, specs, tests, config, ci, generated, assets, code)
                 let mut weekly_categories: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+                let mut excluded_count: u64 = 0;
+
                 for s in stats {
                     let week_entry = weekly_categories.entry(s.week.clone()).or_insert_with(HashMap::new);
 
-                    // Categorize each file path
-                    for path in &s.file_paths {
-                        let category = FileCategory::from_path(path);
-                        let entry = week_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
-                        entry.0 += 1; // file count
-                    }
+                    // Filter to non-excluded paths
+                    let valid_paths: Vec<_> = s.file_paths.iter()
+                        .filter(|p| !FileCategory::from_path(p).is_excluded())
+                        .collect();
 
-                    // Also add totals for additions/deletions per category based on file_paths
-                    let files_per_commit = std::cmp::max(1, s.file_paths.len() as u64);
+                    excluded_count += (s.file_paths.len() - valid_paths.len()) as u64;
+
+                    // Calculate per-file stats based on valid paths only
+                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
                     let additions_per_file = s.additions / files_per_commit;
                     let deletions_per_file = s.deletions / files_per_commit;
 
-                    for path in &s.file_paths {
+                    for path in valid_paths {
                         let category = FileCategory::from_path(path);
                         let entry = week_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1; // file count
                         entry.1 += additions_per_file;
                         entry.2 += deletions_per_file;
                     }
@@ -1479,6 +1617,10 @@ impl GitHubClient {
 
                 let mut sorted_weeks: Vec<_> = weekly_categories.keys().cloned().collect();
                 sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+                if excluded_count > 0 {
+                    println!("\n(Excluded {} files: lock files, node_modules, vendor)", excluded_count);
+                }
 
                 for week in sorted_weeks.iter().take(period_limit) {
                     println!("\n{}", "-".repeat(80));
@@ -1504,16 +1646,25 @@ impl GitHubClient {
             StatsGrouping::MonthCategory => {
                 // Aggregate by month and file category
                 let mut monthly_categories: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+                let mut excluded_count: u64 = 0;
+
                 for s in stats {
                     let month = Self::week_to_month(&s.week);
                     let month_entry = monthly_categories.entry(month).or_insert_with(HashMap::new);
 
-                    // Categorize each file path
-                    let files_per_commit = std::cmp::max(1, s.file_paths.len() as u64);
+                    // Filter to non-excluded paths
+                    let valid_paths: Vec<_> = s.file_paths.iter()
+                        .filter(|p| !FileCategory::from_path(p).is_excluded())
+                        .collect();
+
+                    excluded_count += (s.file_paths.len() - valid_paths.len()) as u64;
+
+                    // Calculate per-file stats based on valid paths only
+                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
                     let additions_per_file = s.additions / files_per_commit;
                     let deletions_per_file = s.deletions / files_per_commit;
 
-                    for path in &s.file_paths {
+                    for path in valid_paths {
                         let category = FileCategory::from_path(path);
                         let entry = month_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
                         entry.0 += 1; // file count
@@ -1524,6 +1675,10 @@ impl GitHubClient {
 
                 let mut sorted_months: Vec<_> = monthly_categories.keys().cloned().collect();
                 sorted_months.sort_by(|a, b| b.cmp(a));
+
+                if excluded_count > 0 {
+                    println!("\n(Excluded {} files: lock files, node_modules, vendor)", excluded_count);
+                }
 
                 for month in sorted_months.iter().take(period_limit) {
                     println!("\n{}", "-".repeat(80));
@@ -1691,5 +1846,165 @@ mod tests {
         assert!(!options.include_forks);
         assert!(!options.include_archived);
         assert!(options.include_private);
+    }
+
+    // =====================================================
+    // FileCategory Tests
+    // =====================================================
+
+    #[test]
+    fn test_file_category_excluded_lock_files() {
+        // Lock files should be excluded
+        assert_eq!(FileCategory::from_path("package-lock.json"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("yarn.lock"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("pnpm-lock.yaml"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("Cargo.lock"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("Gemfile.lock"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("poetry.lock"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("composer.lock"), FileCategory::Excluded);
+    }
+
+    #[test]
+    fn test_file_category_excluded_node_modules() {
+        assert_eq!(FileCategory::from_path("node_modules/lodash/index.js"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("src/node_modules/package/file.js"), FileCategory::Excluded);
+    }
+
+    #[test]
+    fn test_file_category_excluded_vendor() {
+        assert_eq!(FileCategory::from_path("vendor/package/file.php"), FileCategory::Excluded);
+        assert_eq!(FileCategory::from_path("src/vendor/lib/code.go"), FileCategory::Excluded);
+    }
+
+    #[test]
+    fn test_file_category_generated_build_outputs() {
+        // Build outputs
+        assert_eq!(FileCategory::from_path("dist/bundle.js"), FileCategory::Generated);
+        assert_eq!(FileCategory::from_path("build/output.css"), FileCategory::Generated);
+        assert_eq!(FileCategory::from_path("out/main.js"), FileCategory::Generated);
+        assert_eq!(FileCategory::from_path(".next/static/file.js"), FileCategory::Generated);
+        assert_eq!(FileCategory::from_path("target/release/app"), FileCategory::Generated);  // Rust
+        assert_eq!(FileCategory::from_path("bin/Debug/App.dll"), FileCategory::Generated);   // C#
+        assert_eq!(FileCategory::from_path("bin/Release/App.exe"), FileCategory::Generated); // C#
+        assert_eq!(FileCategory::from_path("obj/Debug/file.cs"), FileCategory::Generated);   // C#
+        assert_eq!(FileCategory::from_path("__pycache__/module.pyc"), FileCategory::Generated); // Python
+    }
+
+    #[test]
+    fn test_file_category_generated_minified() {
+        assert_eq!(FileCategory::from_path("assets/app.min.js"), FileCategory::Generated);
+        assert_eq!(FileCategory::from_path("css/styles.min.css"), FileCategory::Generated);
+        assert_eq!(FileCategory::from_path("dist/vendor.bundle.js"), FileCategory::Generated);
+    }
+
+    #[test]
+    fn test_file_category_ci_github() {
+        assert_eq!(FileCategory::from_path(".github/workflows/ci.yml"), FileCategory::CI);
+        assert_eq!(FileCategory::from_path(".github/CODEOWNERS"), FileCategory::CI);
+        assert_eq!(FileCategory::from_path(".github/dependabot.yml"), FileCategory::CI);
+    }
+
+    #[test]
+    fn test_file_category_ci_gitlab() {
+        assert_eq!(FileCategory::from_path(".gitlab-ci.yml"), FileCategory::CI);
+        assert_eq!(FileCategory::from_path(".gitlab/ci/test.yml"), FileCategory::CI);
+    }
+
+    #[test]
+    fn test_file_category_ci_other() {
+        assert_eq!(FileCategory::from_path("Jenkinsfile"), FileCategory::CI);
+        assert_eq!(FileCategory::from_path(".travis.yml"), FileCategory::CI);
+        assert_eq!(FileCategory::from_path("azure-pipelines.yml"), FileCategory::CI);
+        assert_eq!(FileCategory::from_path(".circleci/config.yml"), FileCategory::CI);
+    }
+
+    #[test]
+    fn test_file_category_docs() {
+        assert_eq!(FileCategory::from_path("docs/guide.md"), FileCategory::Docs);
+        assert_eq!(FileCategory::from_path("documentation/api.md"), FileCategory::Docs);
+        assert_eq!(FileCategory::from_path("README.md"), FileCategory::Docs);
+        assert_eq!(FileCategory::from_path("CHANGELOG.md"), FileCategory::Docs);
+        assert_eq!(FileCategory::from_path("CONTRIBUTING.md"), FileCategory::Docs);
+        assert_eq!(FileCategory::from_path("LICENSE.md"), FileCategory::Docs);
+        assert_eq!(FileCategory::from_path("LICENSE"), FileCategory::Docs);
+    }
+
+    #[test]
+    fn test_file_category_specs() {
+        assert_eq!(FileCategory::from_path("specs/api.yaml"), FileCategory::Specs);
+        assert_eq!(FileCategory::from_path("spec/feature.md"), FileCategory::Specs);
+        assert_eq!(FileCategory::from_path("schemas/user.json"), FileCategory::Specs);
+        assert_eq!(FileCategory::from_path("schema/types.graphql"), FileCategory::Specs);
+        assert_eq!(FileCategory::from_path("openapi.yaml"), FileCategory::Specs);
+        assert_eq!(FileCategory::from_path("swagger.json"), FileCategory::Specs);
+    }
+
+    #[test]
+    fn test_file_category_tests_folders() {
+        assert_eq!(FileCategory::from_path("tests/unit/auth.rs"), FileCategory::Tests);
+        assert_eq!(FileCategory::from_path("test/integration/api.py"), FileCategory::Tests);
+        assert_eq!(FileCategory::from_path("__tests__/component.test.js"), FileCategory::Tests);
+        assert_eq!(FileCategory::from_path("src/__tests__/utils.test.ts"), FileCategory::Tests);
+    }
+
+    #[test]
+    fn test_file_category_tests_file_patterns() {
+        // Rust tests
+        assert_eq!(FileCategory::from_path("src/auth_test.rs"), FileCategory::Tests);
+        // Python tests
+        assert_eq!(FileCategory::from_path("src/test_auth.py"), FileCategory::Tests);
+        // JavaScript/TypeScript tests
+        assert_eq!(FileCategory::from_path("src/utils.test.ts"), FileCategory::Tests);
+        assert_eq!(FileCategory::from_path("src/utils.spec.ts"), FileCategory::Tests);
+        assert_eq!(FileCategory::from_path("src/utils_spec.js"), FileCategory::Tests);
+    }
+
+    #[test]
+    fn test_file_category_config_root() {
+        assert_eq!(FileCategory::from_path("tsconfig.json"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path("package.json"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path("Cargo.toml"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path(".eslintrc.json"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path("vite.config.ts"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path("webpack.config.js"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path("tailwind.config.js"), FileCategory::Config);
+    }
+
+    #[test]
+    fn test_file_category_config_folder() {
+        assert_eq!(FileCategory::from_path("config/database.yaml"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path("config/settings.json"), FileCategory::Config);
+        assert_eq!(FileCategory::from_path("configuration/app.toml"), FileCategory::Config);
+    }
+
+    #[test]
+    fn test_file_category_code() {
+        // Regular source files should be Code
+        assert_eq!(FileCategory::from_path("src/main.rs"), FileCategory::Code);
+        assert_eq!(FileCategory::from_path("src/app.ts"), FileCategory::Code);
+        assert_eq!(FileCategory::from_path("lib/utils.py"), FileCategory::Code);
+        assert_eq!(FileCategory::from_path("Controllers/HomeController.cs"), FileCategory::Code);
+        assert_eq!(FileCategory::from_path("src/components/Button.tsx"), FileCategory::Code);
+    }
+
+    #[test]
+    fn test_file_category_is_excluded() {
+        assert!(FileCategory::Excluded.is_excluded());
+        assert!(!FileCategory::Code.is_excluded());
+        assert!(!FileCategory::Tests.is_excluded());
+        assert!(!FileCategory::Docs.is_excluded());
+    }
+
+    #[test]
+    fn test_file_category_as_str() {
+        assert_eq!(FileCategory::Code.as_str(), "code");
+        assert_eq!(FileCategory::Tests.as_str(), "tests");
+        assert_eq!(FileCategory::Docs.as_str(), "docs");
+        assert_eq!(FileCategory::Specs.as_str(), "specs");
+        assert_eq!(FileCategory::Config.as_str(), "config");
+        assert_eq!(FileCategory::CI.as_str(), "ci");
+        assert_eq!(FileCategory::Generated.as_str(), "generated");
+        assert_eq!(FileCategory::Assets.as_str(), "assets");
+        assert_eq!(FileCategory::Excluded.as_str(), "excluded");
     }
 }
