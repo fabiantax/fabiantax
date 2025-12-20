@@ -95,7 +95,9 @@ pub struct WeeklyRepoStats {
     pub deletions: u64,
     pub file_types: std::collections::HashMap<String, FileTypeWeeklyStats>,
     #[serde(default)]
-    pub file_paths: Vec<String>, // Full paths for categorization
+    pub file_paths: Vec<String>, // Legacy: kept for backward compatibility
+    #[serde(default)]
+    pub file_stats: Vec<FileStats>, // Per-file additions/deletions
 }
 
 /// Weekly stats per file type
@@ -149,6 +151,14 @@ pub struct CachedRepoCommits {
     pub version: u32, // Cache version for invalidation
 }
 
+/// Per-file statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileStats {
+    pub path: String,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
 /// Cached commit details
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CachedCommit {
@@ -158,7 +168,9 @@ pub struct CachedCommit {
     pub deletions: u64,
     pub file_extensions: Vec<String>,
     #[serde(default)]
-    pub file_paths: Vec<String>, // Full file paths for categorization
+    pub file_paths: Vec<String>, // Legacy: kept for cache migration
+    #[serde(default)]
+    pub file_stats: Vec<FileStats>, // New: per-file additions/deletions
 }
 
 /// Programming language detected from file extension
@@ -556,7 +568,7 @@ impl GitHubCache {
         self.cache_dir.join(format!("{}.json", repo.replace('/', "_")))
     }
 
-    const CACHE_VERSION: u32 = 3; // Increment when cache format changes
+    const CACHE_VERSION: u32 = 4; // Increment when cache format changes (v4: per-file stats)
 
     pub fn get(&self, repo: &str) -> Option<CachedRepoCommits> {
         use chrono::{Datelike, Utc};
@@ -1242,8 +1254,8 @@ impl GitHubClient {
     }
 
     /// Fetch commit stats (additions/deletions) for a repository with caching
-    pub fn get_repo_commits_stats(&self, owner: &str, repo: &str, _since: Option<&str>, _until: Option<&str>) -> Result<Vec<(String, u64, u64, u64, Vec<String>, Vec<String>)>, String> {
-        // Returns: (week, commits, additions, deletions, file_extensions, file_paths)
+    pub fn get_repo_commits_stats(&self, owner: &str, repo: &str, _since: Option<&str>, _until: Option<&str>) -> Result<Vec<(String, u64, u64, u64, Vec<String>, Vec<String>, Vec<FileStats>)>, String> {
+        // Returns: (week, commits, additions, deletions, file_extensions, file_paths, file_stats)
         use chrono::{DateTime, Datelike, Utc};
 
         let cache = GitHubCache::new();
@@ -1252,19 +1264,20 @@ impl GitHubClient {
         // Check cache first
         if let Some(cached) = cache.get(&repo_key) {
             // Convert cached data to result format
-            let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>, Vec<String>)> = HashMap::new();
+            let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>, Vec<String>, Vec<FileStats>)> = HashMap::new();
             for commit in cached.commits {
-                let entry = weekly_stats.entry(commit.week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new()));
+                let entry = weekly_stats.entry(commit.week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new(), Vec::new()));
                 entry.0 += 1;
                 entry.1 += commit.additions;
                 entry.2 += commit.deletions;
                 entry.3.extend(commit.file_extensions);
                 entry.4.extend(commit.file_paths);
+                entry.5.extend(commit.file_stats);
             }
             let mut result: Vec<_> = weekly_stats
                 .into_iter()
-                .map(|(week, (commits, additions, deletions, exts, paths))| {
-                    (week, commits, additions, deletions, exts, paths)
+                .map(|(week, (commits, additions, deletions, exts, paths, stats))| {
+                    (week, commits, additions, deletions, exts, paths, stats)
                 })
                 .collect();
             result.sort_by(|a, b| b.0.cmp(&a.0));
@@ -1337,7 +1350,7 @@ impl GitHubClient {
         }
 
         // Group by week and fetch stats for each commit
-        let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>, Vec<String>)> = HashMap::new();
+        let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>, Vec<String>, Vec<FileStats>)> = HashMap::new();
         let mut cached_commits = Vec::new();
 
         for (sha, date_str) in all_commits.iter().take(100) { // Limit API calls
@@ -1383,6 +1396,10 @@ impl GitHubClient {
                     #[derive(Deserialize)]
                     struct FileDetail {
                         filename: String,
+                        #[serde(default)]
+                        additions: u64,
+                        #[serde(default)]
+                        deletions: u64,
                     }
 
                     if let Ok(commit_data) = response.json::<CommitStats>() {
@@ -1390,6 +1407,7 @@ impl GitHubClient {
                         let mut deletions = 0u64;
                         let mut file_exts = Vec::new();
                         let mut file_paths = Vec::new();
+                        let mut file_stats = Vec::new();
 
                         if let Some(stats) = commit_data.stats {
                             additions = stats.additions;
@@ -1399,6 +1417,11 @@ impl GitHubClient {
                         if let Some(files) = commit_data.files {
                             for file in &files {
                                 file_paths.push(file.filename.clone());
+                                file_stats.push(FileStats {
+                                    path: file.filename.clone(),
+                                    additions: file.additions,
+                                    deletions: file.deletions,
+                                });
                                 if let Some(ext) = std::path::Path::new(&file.filename)
                                     .extension()
                                     .and_then(|e| e.to_str())
@@ -1409,12 +1432,13 @@ impl GitHubClient {
                         }
 
                         // Store in weekly stats
-                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new()));
+                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new(), Vec::new()));
                         entry.0 += 1;
                         entry.1 += additions;
                         entry.2 += deletions;
                         entry.3.extend(file_exts.clone());
                         entry.4.extend(file_paths.clone());
+                        entry.5.extend(file_stats.clone());
 
                         // Store for cache
                         cached_commits.push(CachedCommit {
@@ -1424,6 +1448,7 @@ impl GitHubClient {
                             deletions,
                             file_extensions: file_exts,
                             file_paths,
+                            file_stats,
                         });
                     }
                 }
@@ -1442,8 +1467,8 @@ impl GitHubClient {
         // Convert to sorted vector
         let mut result: Vec<_> = weekly_stats
             .into_iter()
-            .map(|(week, (commits, additions, deletions, exts, paths))| {
-                (week, commits, additions, deletions, exts, paths)
+            .map(|(week, (commits, additions, deletions, exts, paths, stats))| {
+                (week, commits, additions, deletions, exts, paths, stats)
             })
             .collect();
 
@@ -1468,7 +1493,7 @@ impl GitHubClient {
 
             match self.get_repo_commits_stats(owner, &repo.name, None, None) {
                 Ok(commits) => {
-                    for (week, commit_count, additions, deletions, file_exts, file_paths) in commits {
+                    for (week, commit_count, additions, deletions, file_exts, file_paths, file_stats) in commits {
                         let week_entry = all_stats.entry(week.clone()).or_insert_with(HashMap::new);
 
                         let repo_entry = week_entry.entry(repo.name.clone()).or_insert_with(|| {
@@ -1480,6 +1505,7 @@ impl GitHubClient {
                                 deletions: 0,
                                 file_types: HashMap::new(),
                                 file_paths: Vec::new(),
+                                file_stats: Vec::new(),
                             }
                         });
 
@@ -1487,6 +1513,7 @@ impl GitHubClient {
                         repo_entry.additions += additions;
                         repo_entry.deletions += deletions;
                         repo_entry.file_paths.extend(file_paths);
+                        repo_entry.file_stats.extend(file_stats);
 
                         // Count file types
                         for ext in file_exts {
@@ -1758,24 +1785,17 @@ impl GitHubClient {
                 for s in stats {
                     let week_entry = weekly_categories.entry(s.week.clone()).or_insert_with(HashMap::new);
 
-                    // Filter to non-excluded paths
-                    let valid_paths: Vec<_> = s.file_paths.iter()
-                        .filter(|p| !FileCategory::from_path(p).is_excluded())
-                        .collect();
-
-                    excluded_count += (s.file_paths.len() - valid_paths.len()) as u64;
-
-                    // Calculate per-file stats based on valid paths only
-                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
-                    let additions_per_file = s.additions / files_per_commit;
-                    let deletions_per_file = s.deletions / files_per_commit;
-
-                    for path in valid_paths {
-                        let category = FileCategory::from_path(path);
+                    // Use per-file stats for accurate categorization
+                    for file_stat in &s.file_stats {
+                        let category = FileCategory::from_path(&file_stat.path);
+                        if category.is_excluded() {
+                            excluded_count += 1;
+                            continue;
+                        }
                         let entry = week_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
                         entry.0 += 1; // file count
-                        entry.1 += additions_per_file;
-                        entry.2 += deletions_per_file;
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
                     }
                 }
 
@@ -1816,24 +1836,17 @@ impl GitHubClient {
                     let month = Self::week_to_month(&s.week);
                     let month_entry = monthly_categories.entry(month).or_insert_with(HashMap::new);
 
-                    // Filter to non-excluded paths
-                    let valid_paths: Vec<_> = s.file_paths.iter()
-                        .filter(|p| !FileCategory::from_path(p).is_excluded())
-                        .collect();
-
-                    excluded_count += (s.file_paths.len() - valid_paths.len()) as u64;
-
-                    // Calculate per-file stats based on valid paths only
-                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
-                    let additions_per_file = s.additions / files_per_commit;
-                    let deletions_per_file = s.deletions / files_per_commit;
-
-                    for path in valid_paths {
-                        let category = FileCategory::from_path(path);
+                    // Use per-file stats for accurate categorization
+                    for file_stat in &s.file_stats {
+                        let category = FileCategory::from_path(&file_stat.path);
+                        if category.is_excluded() {
+                            excluded_count += 1;
+                            continue;
+                        }
                         let entry = month_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
                         entry.0 += 1; // file count
-                        entry.1 += additions_per_file;
-                        entry.2 += deletions_per_file;
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
                     }
                 }
 
@@ -1872,21 +1885,16 @@ impl GitHubClient {
                 for s in stats {
                     let week_entry = weekly_langs.entry(s.week.clone()).or_insert_with(HashMap::new);
 
-                    // Filter excluded files and categorize by language
-                    let valid_paths: Vec<_> = s.file_paths.iter()
-                        .filter(|p| !FileCategory::from_path(p).is_excluded())
-                        .collect();
-
-                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
-                    let additions_per_file = s.additions / files_per_commit;
-                    let deletions_per_file = s.deletions / files_per_commit;
-
-                    for path in valid_paths {
-                        let lang = ProgrammingLanguage::from_path(path);
+                    // Use per-file stats for accurate language categorization
+                    for file_stat in &s.file_stats {
+                        if FileCategory::from_path(&file_stat.path).is_excluded() {
+                            continue;
+                        }
+                        let lang = ProgrammingLanguage::from_path(&file_stat.path);
                         let entry = week_entry.entry(lang.as_str().to_string()).or_insert((0, 0, 0));
                         entry.0 += 1;
-                        entry.1 += additions_per_file;
-                        entry.2 += deletions_per_file;
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
                     }
                 }
 
@@ -1921,21 +1929,16 @@ impl GitHubClient {
                     let month = Self::week_to_month(&s.week);
                     let month_entry = monthly_langs.entry(month).or_insert_with(HashMap::new);
 
-                    // Filter excluded files and categorize by language
-                    let valid_paths: Vec<_> = s.file_paths.iter()
-                        .filter(|p| !FileCategory::from_path(p).is_excluded())
-                        .collect();
-
-                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
-                    let additions_per_file = s.additions / files_per_commit;
-                    let deletions_per_file = s.deletions / files_per_commit;
-
-                    for path in valid_paths {
-                        let lang = ProgrammingLanguage::from_path(path);
+                    // Use per-file stats for accurate language categorization
+                    for file_stat in &s.file_stats {
+                        if FileCategory::from_path(&file_stat.path).is_excluded() {
+                            continue;
+                        }
+                        let lang = ProgrammingLanguage::from_path(&file_stat.path);
                         let entry = month_entry.entry(lang.as_str().to_string()).or_insert((0, 0, 0));
                         entry.0 += 1;
-                        entry.1 += additions_per_file;
-                        entry.2 += deletions_per_file;
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
                     }
                 }
 
