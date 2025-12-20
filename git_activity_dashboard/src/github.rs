@@ -568,7 +568,7 @@ impl GitHubCache {
         self.cache_dir.join(format!("{}.json", repo.replace('/', "_")))
     }
 
-    const CACHE_VERSION: u32 = 4; // Increment when cache format changes (v4: per-file stats)
+    const CACHE_VERSION: u32 = 5; // v5: pagination for commits with >300 files
 
     pub fn get(&self, repo: &str) -> Option<CachedRepoCommits> {
         use chrono::{Datelike, Utc};
@@ -613,6 +613,23 @@ impl GitHubCache {
             fs::write(path, json).ok();
         }
     }
+}
+
+/// Parse GitHub Link header to extract the "next" page URL
+/// Format: <url>; rel="next", <url>; rel="last"
+fn parse_link_header_next(link_header: &str) -> Option<String> {
+    for part in link_header.split(',') {
+        let part = part.trim();
+        if part.contains("rel=\"next\"") {
+            // Extract URL between < and >
+            if let Some(start) = part.find('<') {
+                if let Some(end) = part.find('>') {
+                    return Some(part[start + 1..end].to_string());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Options for GitHub scanning
@@ -1363,95 +1380,122 @@ impl GitHubClient {
                 continue;
             };
 
-            // Fetch commit details for additions/deletions
+            // Fetch commit details for additions/deletions with pagination support
             let commit_url = format!(
                 "https://api.github.com/repos/{}/{}/commits/{}",
                 owner, repo, sha
             );
 
-            let mut request = self
-                .client
-                .get(&commit_url)
-                .header(USER_AGENT, "git-activity-dashboard")
-                .header(ACCEPT, "application/vnd.github+json");
-
-            if let Some(token) = &self.token {
-                request = request.header(AUTHORIZATION, format!("Bearer {}", token));
+            #[derive(Deserialize)]
+            struct CommitStats {
+                stats: Option<StatsDetail>,
+                files: Option<Vec<FileDetail>>,
             }
 
-            if let Ok(response) = request.send() {
-                if response.status().is_success() {
-                    #[derive(Deserialize)]
-                    struct CommitStats {
-                        stats: Option<StatsDetail>,
-                        files: Option<Vec<FileDetail>>,
-                    }
+            #[derive(Deserialize)]
+            struct StatsDetail {
+                additions: u64,
+                deletions: u64,
+            }
 
-                    #[derive(Deserialize)]
-                    struct StatsDetail {
-                        additions: u64,
-                        deletions: u64,
-                    }
+            #[derive(Deserialize, Clone)]
+            struct FileDetail {
+                filename: String,
+                #[serde(default)]
+                additions: u64,
+                #[serde(default)]
+                deletions: u64,
+            }
 
-                    #[derive(Deserialize)]
-                    struct FileDetail {
-                        filename: String,
-                        #[serde(default)]
-                        additions: u64,
-                        #[serde(default)]
-                        deletions: u64,
-                    }
+            let mut additions = 0u64;
+            let mut deletions = 0u64;
+            let mut file_exts = Vec::new();
+            let mut file_paths = Vec::new();
+            let mut file_stats = Vec::new();
+            let mut current_url = Some(commit_url);
+            let mut page_count = 0;
+            const MAX_PAGES: usize = 10; // Up to 3000 files (300 per page)
 
-                    if let Ok(commit_data) = response.json::<CommitStats>() {
-                        let mut additions = 0u64;
-                        let mut deletions = 0u64;
-                        let mut file_exts = Vec::new();
-                        let mut file_paths = Vec::new();
-                        let mut file_stats = Vec::new();
+            // Fetch all pages of files for this commit
+            while let Some(url) = current_url.take() {
+                if page_count >= MAX_PAGES {
+                    break;
+                }
+                page_count += 1;
 
-                        if let Some(stats) = commit_data.stats {
-                            additions = stats.additions;
-                            deletions = stats.deletions;
-                        }
+                let mut request = self
+                    .client
+                    .get(&url)
+                    .header(USER_AGENT, "git-activity-dashboard")
+                    .header(ACCEPT, "application/vnd.github+json");
 
-                        if let Some(files) = commit_data.files {
-                            for file in &files {
-                                file_paths.push(file.filename.clone());
-                                file_stats.push(FileStats {
-                                    path: file.filename.clone(),
-                                    additions: file.additions,
-                                    deletions: file.deletions,
-                                });
-                                if let Some(ext) = std::path::Path::new(&file.filename)
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                {
-                                    file_exts.push(ext.to_string());
+                if let Some(token) = &self.token {
+                    request = request.header(AUTHORIZATION, format!("Bearer {}", token));
+                }
+
+                if let Ok(response) = request.send() {
+                    if response.status().is_success() {
+                        // Extract Link header before consuming body
+                        let next_url = response
+                            .headers()
+                            .get("link")
+                            .and_then(|h| h.to_str().ok())
+                            .and_then(parse_link_header_next);
+
+                        if let Ok(commit_data) = response.json::<CommitStats>() {
+                            // Only get stats from first page
+                            if page_count == 1 {
+                                if let Some(stats) = commit_data.stats {
+                                    additions = stats.additions;
+                                    deletions = stats.deletions;
                                 }
                             }
+
+                            if let Some(files) = commit_data.files {
+                                for file in &files {
+                                    file_paths.push(file.filename.clone());
+                                    file_stats.push(FileStats {
+                                        path: file.filename.clone(),
+                                        additions: file.additions,
+                                        deletions: file.deletions,
+                                    });
+                                    if let Some(ext) = std::path::Path::new(&file.filename)
+                                        .extension()
+                                        .and_then(|e| e.to_str())
+                                    {
+                                        file_exts.push(ext.to_string());
+                                    }
+                                }
+                            }
+
+                            // Continue to next page if available
+                            current_url = next_url;
                         }
-
-                        // Store in weekly stats
-                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new(), Vec::new()));
-                        entry.0 += 1;
-                        entry.1 += additions;
-                        entry.2 += deletions;
-                        entry.3.extend(file_exts.clone());
-                        entry.4.extend(file_paths.clone());
-                        entry.5.extend(file_stats.clone());
-
-                        // Store for cache
-                        cached_commits.push(CachedCommit {
-                            sha: sha.clone(),
-                            week,
-                            additions,
-                            deletions,
-                            file_extensions: file_exts,
-                            file_paths,
-                            file_stats,
-                        });
                     }
                 }
+            }
+
+            // Only store if we got valid data
+            if additions > 0 || deletions > 0 || !file_stats.is_empty() {
+                // Store in weekly stats
+                let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new(), Vec::new()));
+                entry.0 += 1;
+                entry.1 += additions;
+                entry.2 += deletions;
+                entry.3.extend(file_exts.clone());
+                entry.4.extend(file_paths.clone());
+                entry.5.extend(file_stats.clone());
+
+                // Store for cache
+                cached_commits.push(CachedCommit {
+                    sha: sha.clone(),
+                    week,
+                    additions,
+                    deletions,
+                    file_extensions: file_exts,
+                    file_paths,
+                    file_stats,
+                });
             }
         }
 
