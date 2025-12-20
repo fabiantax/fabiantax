@@ -118,6 +118,7 @@ pub enum StatsGrouping {
     WeekCategory,
     WeekLanguage,
     Month,
+    MonthRepo,
     MonthFileType,
     MonthCategory,
     MonthLanguage,
@@ -133,6 +134,7 @@ impl StatsGrouping {
             "week-category" | "weekcategory" | "week-cat" => Some(Self::WeekCategory),
             "week-lang" | "weeklang" | "week-language" => Some(Self::WeekLanguage),
             "month" => Some(Self::Month),
+            "month-repo" | "monthrepo" => Some(Self::MonthRepo),
             "month-filetype" | "monthfiletype" | "month-file" => Some(Self::MonthFileType),
             "month-category" | "monthcategory" | "month-cat" => Some(Self::MonthCategory),
             "month-lang" | "monthlang" | "month-language" => Some(Self::MonthLanguage),
@@ -1680,6 +1682,41 @@ impl GitHubClient {
                     let net = *additions as i64 - *deletions as i64;
                     let bar = "█".repeat(std::cmp::min((*commits / 10) as usize, 20));
                     println!("{:12} {:>8} {:>+12} {:>12} {:>+12}  {}", month, commits, additions, deletions, net, bar);
+                }
+            }
+
+            StatsGrouping::MonthRepo => {
+                // Group by month, then show repos within each month
+                let mut by_month: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+                for s in stats {
+                    let month = Self::week_to_month(&s.week);
+                    let month_entry = by_month.entry(month).or_insert_with(HashMap::new);
+                    let repo_entry = month_entry.entry(s.repo.clone()).or_insert((0, 0, 0));
+                    repo_entry.0 += s.commits;
+                    repo_entry.1 += s.additions;
+                    repo_entry.2 += s.deletions;
+                }
+
+                let mut sorted_months: Vec<_> = by_month.keys().cloned().collect();
+                sorted_months.sort_by(|a, b| b.cmp(a));
+
+                for month in sorted_months.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
+                    println!("Month: {}", month);
+                    println!("{}", "-".repeat(80));
+                    println!("{:25} {:>8} {:>12} {:>12} {:>12}", "Repository", "Commits", "Additions", "Deletions", "Net LOC");
+
+                    if let Some(repos) = by_month.get(month) {
+                        let mut sorted_repos: Vec<_> = repos.iter().collect();
+                        sorted_repos.sort_by(|a, b| b.1.0.cmp(&a.1.0)); // Sort by commits
+
+                        for (repo, (commits, additions, deletions)) in sorted_repos.iter().take(10) {
+                            let net = *additions as i64 - *deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(*commits as usize, 15));
+                            println!("{:25} {:>8} {:>+12} {:>12} {:>+12}  {}",
+                                repo, commits, additions, deletions, net, bar);
+                        }
+                    }
                 }
             }
 
