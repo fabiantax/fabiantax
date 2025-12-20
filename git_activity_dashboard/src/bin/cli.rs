@@ -2,7 +2,7 @@ use clap::Parser;
 use git_activity_dashboard::{
     GitAnalyzer, BadgeExporter, LinkedInExporter, MarkdownExporter, PortfolioExporter,
     analyze_repo, find_repos, is_git_repo, AnalyzeOptions,
-    GitHubClient, GitHubScanOptions, StatsGrouping,
+    GitHubClient, GitHubScanOptions, StatsGrouping, SnapshotStats,
     parse_date, get_month_range, get_last_month_range,
 };
 use std::fs;
@@ -116,6 +116,10 @@ struct Cli {
     /// Limit number of periods to show (default: 20)
     #[arg(long, value_name = "N")]
     limit: Option<usize>,
+
+    /// Analyze current file state (LOC per category) instead of commit history
+    #[arg(long)]
+    snapshot: bool,
 }
 
 fn print_summary(analyzer: &GitAnalyzer) {
@@ -521,6 +525,16 @@ fn main() {
             println!("  Failed: {}", scan_result.failed.len());
         }
 
+        // If --snapshot flag is set, analyze current file state instead of commit history
+        if cli.snapshot {
+            if !cli.quiet {
+                println!("\nAnalyzing current file state (snapshot)...");
+            }
+            let snapshot = SnapshotStats::analyze(&scan_result.repo_paths);
+            snapshot.display(true); // Show repos breakdown
+            return;
+        }
+
         // Now analyze the repos
         let mut analyzer = GitAnalyzer::new(cli.email.clone(), cli.author.clone());
 
@@ -596,6 +610,16 @@ fn main() {
             std::process::exit(1);
         }
     };
+
+    // If --snapshot flag is set, analyze current file state instead of commit history
+    if cli.snapshot {
+        if !cli.quiet {
+            println!("\nAnalyzing current file state (snapshot)...");
+        }
+        let snapshot = SnapshotStats::analyze(&repo_paths);
+        snapshot.display(true); // Show repos breakdown
+        return;
+    }
 
     // Create analyzer
     let mut analyzer = GitAnalyzer::new(cli.email.clone(), cli.author.clone());

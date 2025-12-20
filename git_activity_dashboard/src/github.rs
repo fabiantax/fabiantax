@@ -339,6 +339,256 @@ impl ProgrammingLanguage {
     }
 }
 
+/// Snapshot stats for a single repository
+#[derive(Debug, Clone)]
+pub struct RepoSnapshot {
+    pub name: String,
+    pub path: PathBuf,
+    pub files: u64,
+    pub lines: u64,
+    pub categories: HashMap<String, (u64, u64)>, // category -> (files, lines)
+    pub languages: HashMap<String, (u64, u64)>,  // language -> (files, lines)
+}
+
+/// Aggregated snapshot stats across all repositories
+#[derive(Debug, Clone)]
+pub struct SnapshotStats {
+    pub repos: Vec<RepoSnapshot>,
+    pub total_files: u64,
+    pub total_lines: u64,
+    pub by_category: HashMap<String, (u64, u64)>, // category -> (files, lines)
+    pub by_language: HashMap<String, (u64, u64)>, // language -> (files, lines)
+    pub by_repo: HashMap<String, (u64, u64)>,     // repo -> (files, lines)
+}
+
+impl SnapshotStats {
+    /// Analyze the current file state of repositories
+    pub fn analyze(repo_paths: &[PathBuf]) -> Self {
+        let mut repos = Vec::new();
+        let mut total_files = 0u64;
+        let mut total_lines = 0u64;
+        let mut by_category: HashMap<String, (u64, u64)> = HashMap::new();
+        let mut by_language: HashMap<String, (u64, u64)> = HashMap::new();
+        let mut by_repo: HashMap<String, (u64, u64)> = HashMap::new();
+
+        for repo_path in repo_paths {
+            let repo_name = repo_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            print!("  {} ", repo_name);
+            std::io::Write::flush(&mut std::io::stdout()).ok();
+
+            let snapshot = Self::analyze_repo(repo_path, &repo_name);
+
+            // Aggregate into totals
+            total_files += snapshot.files;
+            total_lines += snapshot.lines;
+
+            for (cat, (files, lines)) in &snapshot.categories {
+                let entry = by_category.entry(cat.clone()).or_insert((0, 0));
+                entry.0 += files;
+                entry.1 += lines;
+            }
+
+            for (lang, (files, lines)) in &snapshot.languages {
+                let entry = by_language.entry(lang.clone()).or_insert((0, 0));
+                entry.0 += files;
+                entry.1 += lines;
+            }
+
+            by_repo.insert(repo_name.clone(), (snapshot.files, snapshot.lines));
+
+            println!("✓");
+            repos.push(snapshot);
+        }
+
+        Self {
+            repos,
+            total_files,
+            total_lines,
+            by_category,
+            by_language,
+            by_repo,
+        }
+    }
+
+    fn analyze_repo(repo_path: &Path, repo_name: &str) -> RepoSnapshot {
+        let mut files = 0u64;
+        let mut lines = 0u64;
+        let mut categories: HashMap<String, (u64, u64)> = HashMap::new();
+        let mut languages: HashMap<String, (u64, u64)> = HashMap::new();
+
+        Self::walk_directory(repo_path, repo_path, &mut |rel_path, file_lines| {
+            let category = FileCategory::from_path(rel_path);
+            if category.is_excluded() {
+                return; // Skip excluded files
+            }
+
+            files += 1;
+            lines += file_lines;
+
+            let cat_entry = categories
+                .entry(category.as_str().to_string())
+                .or_insert((0, 0));
+            cat_entry.0 += 1;
+            cat_entry.1 += file_lines;
+
+            let lang = ProgrammingLanguage::from_path(rel_path);
+            let lang_entry = languages
+                .entry(lang.as_str().to_string())
+                .or_insert((0, 0));
+            lang_entry.0 += 1;
+            lang_entry.1 += file_lines;
+        });
+
+        RepoSnapshot {
+            name: repo_name.to_string(),
+            path: repo_path.to_path_buf(),
+            files,
+            lines,
+            categories,
+            languages,
+        }
+    }
+
+    fn walk_directory<F>(base: &Path, dir: &Path, callback: &mut F)
+    where
+        F: FnMut(&str, u64),
+    {
+        let entries = match fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+
+            // Skip hidden files/dirs and common excluded directories
+            if name.starts_with('.')
+                || name == "node_modules"
+                || name == "vendor"
+                || name == "target"
+                || name == "dist"
+                || name == "build"
+                || name == "__pycache__"
+            {
+                continue;
+            }
+
+            if path.is_dir() {
+                Self::walk_directory(base, &path, callback);
+            } else if path.is_file() {
+                let rel_path = path
+                    .strip_prefix(base)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .to_string();
+
+                // Count lines in file
+                let line_count = Self::count_lines(&path);
+                callback(&rel_path, line_count);
+            }
+        }
+    }
+
+    fn count_lines(path: &Path) -> u64 {
+        // Skip binary files and very large files
+        let metadata = match fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => return 0,
+        };
+
+        // Skip files larger than 1MB (likely binary or generated)
+        if metadata.len() > 1_000_000 {
+            return 0;
+        }
+
+        match fs::read(path) {
+            Ok(contents) => {
+                // Check if binary (contains null bytes in first 8KB)
+                let check_len = std::cmp::min(contents.len(), 8192);
+                if contents[..check_len].contains(&0) {
+                    return 0;
+                }
+                contents.iter().filter(|&&b| b == b'\n').count() as u64
+            }
+            Err(_) => 0,
+        }
+    }
+
+    /// Display snapshot stats
+    pub fn display(&self, show_repos: bool) {
+        println!("\n{}", "=".repeat(80));
+        println!("CURRENT STATE SNAPSHOT (Main Branch LOC)");
+        println!("{}", "=".repeat(80));
+
+        println!("\nTotal: {} files, {} lines of code\n",
+            format_number(self.total_files),
+            format_number(self.total_lines));
+
+        // By Category
+        println!("{}", "-".repeat(80));
+        println!("BY CATEGORY");
+        println!("{}", "-".repeat(80));
+        println!("{:20} {:>12} {:>15}", "Category", "Files", "Lines");
+
+        let mut sorted_cats: Vec<_> = self.by_category.iter().collect();
+        sorted_cats.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by lines desc
+
+        for (cat, (files, lines)) in sorted_cats {
+            let bar = "█".repeat(std::cmp::min((*lines / 10000) as usize, 20));
+            println!("{:20} {:>12} {:>15}  {}", cat, files, format_number(*lines), bar);
+        }
+
+        // By Language
+        println!("\n{}", "-".repeat(80));
+        println!("BY LANGUAGE");
+        println!("{}", "-".repeat(80));
+        println!("{:20} {:>12} {:>15}", "Language", "Files", "Lines");
+
+        let mut sorted_langs: Vec<_> = self.by_language.iter().collect();
+        sorted_langs.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by lines desc
+
+        for (lang, (files, lines)) in sorted_langs.iter().take(15) {
+            let bar = "█".repeat(std::cmp::min((*lines / 10000) as usize, 20));
+            println!("{:20} {:>12} {:>15}  {}", lang, files, format_number(*lines), bar);
+        }
+
+        // By Repo (if requested)
+        if show_repos {
+            println!("\n{}", "-".repeat(80));
+            println!("BY REPOSITORY");
+            println!("{}", "-".repeat(80));
+            println!("{:30} {:>12} {:>15}", "Repository", "Files", "Lines");
+
+            let mut sorted_repos: Vec<_> = self.by_repo.iter().collect();
+            sorted_repos.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by lines desc
+
+            for (repo, (files, lines)) in sorted_repos.iter().take(20) {
+                let bar = "█".repeat(std::cmp::min((*lines / 10000) as usize, 15));
+                println!("{:30} {:>12} {:>15}  {}", repo, files, format_number(*lines), bar);
+            }
+        }
+
+        println!("\n{}", "=".repeat(80));
+    }
+}
+
+fn format_number(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
 /// File category based on folder patterns
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum FileCategory {
@@ -2675,5 +2925,67 @@ mod tests {
         let header = r#"<https://api.github.com/repos/owner/repo/commits/sha?page=2>; rel="next", <https://api.github.com/repos/owner/repo/commits/sha?page=5>; rel="last""#;
         let result = parse_link_header_next(header);
         assert_eq!(result, Some("https://api.github.com/repos/owner/repo/commits/sha?page=2".to_string()));
+    }
+
+    // =====================================================
+    // Snapshot / format_number Tests
+    // =====================================================
+
+    #[test]
+    fn test_format_number_small() {
+        assert_eq!(format_number(0), "0");
+        assert_eq!(format_number(1), "1");
+        assert_eq!(format_number(999), "999");
+    }
+
+    #[test]
+    fn test_format_number_thousands() {
+        assert_eq!(format_number(1000), "1.0K");
+        assert_eq!(format_number(1500), "1.5K");
+        assert_eq!(format_number(10000), "10.0K");
+        assert_eq!(format_number(999999), "1000.0K");
+    }
+
+    #[test]
+    fn test_format_number_millions() {
+        assert_eq!(format_number(1000000), "1.0M");
+        assert_eq!(format_number(1500000), "1.5M");
+        assert_eq!(format_number(10000000), "10.0M");
+    }
+
+    #[test]
+    fn test_snapshot_count_lines() {
+        // Test with a temporary file
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let file_path = dir.join("test_snapshot_lines.txt");
+
+        let mut file = fs::File::create(&file_path).unwrap();
+        writeln!(file, "line 1").unwrap();
+        writeln!(file, "line 2").unwrap();
+        writeln!(file, "line 3").unwrap();
+        drop(file);
+
+        let count = SnapshotStats::count_lines(&file_path);
+        assert_eq!(count, 3);
+
+        fs::remove_file(&file_path).ok();
+    }
+
+    #[test]
+    fn test_snapshot_count_lines_binary() {
+        // Binary files should return 0 lines
+        use std::io::Write;
+        let dir = std::env::temp_dir();
+        let file_path = dir.join("test_snapshot_binary.bin");
+
+        let mut file = fs::File::create(&file_path).unwrap();
+        file.write_all(&[0, 1, 2, 0, 3, 4]).unwrap(); // Contains null bytes
+        drop(file);
+
+        let count = SnapshotStats::count_lines(&file_path);
+        assert_eq!(count, 0);
+
+        fs::remove_file(&file_path).ok();
     }
 }
