@@ -10,19 +10,32 @@ A Rust-based tool to analyze git contributions across repositories. Works as bot
 - Files changed
 - Languages/technologies used (breakdown by percentage)
 
+### GitHub Stats (No Cloning Required)
+- Fetch stats directly from GitHub API
+- Multiple grouping options for analysis
+- Per-file additions/deletions with pagination support
+
+### Current State Snapshot
+- Analyze actual LOC per category on disk
+- Respects .gitignore patterns
+- Parallel processing with rayon
+
 ### Contribution Type Breakdown
 | Type | Description |
 |------|-------------|
-| **Production Code** | Core application code |
+| **Code** | Core application code |
 | **Tests** | Unit, integration, e2e tests |
-| **Documentation** | README, docs, markdown |
-| **Specs & Config** | OpenAPI, JSON schemas, CI/CD |
-| **Infrastructure** | Docker, Terraform, scripts |
-| **Styling** | CSS, SCSS, design files |
+| **Docs** | README, docs, markdown |
+| **Specs** | OpenAPI, JSON schemas |
+| **Config** | Package.json, tsconfig, etc. |
+| **CI** | GitHub Actions, Jenkinsfile |
+| **Generated** | Build outputs, minified files |
+| **Assets** | Images, static files |
 
 ### Time-Based Views
 - Daily activity (last 7 days)
 - Weekly activity (last 4 weeks)
+- Monthly activity breakdown
 
 ### Export Formats
 - **JSON** - Raw data for custom integrations
@@ -59,6 +72,8 @@ wasm-pack build --target nodejs --features wasm
 
 ## CLI Usage
 
+### Local Repository Analysis
+
 ```bash
 # Analyze current repository
 git-activity
@@ -82,6 +97,44 @@ git-activity -s ~/projects --linkedin linkedin.txt
 git-activity -s ~/projects --all-exports ./exports/
 ```
 
+### GitHub Stats (No Cloning)
+
+```bash
+# Set your GitHub token
+export GITHUB_TOKEN=your_token
+
+# Weekly overview
+git-activity --github-stats --group-by week --limit 12
+
+# Monthly by repository
+git-activity --github-stats --group-by month-repo --limit 6
+
+# Total LOC per category (all time)
+git-activity --github-stats --group-by category
+
+# Total LOC per repository
+git-activity --github-stats --group-by repo --limit 20
+
+# Weekly breakdown by category
+git-activity --github-stats --group-by week-category
+
+# Monthly breakdown by language
+git-activity --github-stats --group-by month-lang
+```
+
+### Current State Snapshot
+
+```bash
+# Analyze actual LOC on disk (respects .gitignore)
+git-activity -r ~/projects/myrepo --snapshot
+
+# Scan multiple repos and get current state
+git-activity -s ~/projects --snapshot
+
+# With GitHub scan (clones repos first)
+git-activity --github-scan --snapshot
+```
+
 ### CLI Options
 
 | Option | Description |
@@ -91,6 +144,11 @@ git-activity -s ~/projects --all-exports ./exports/
 | `-d, --depth` | Max scan depth (default: 3) |
 | `-e, --email` | Filter by author email |
 | `-a, --author` | Filter by author name |
+| `--github-stats` | Fetch stats from GitHub API (no cloning) |
+| `--github-scan` | Clone repos and analyze |
+| `--group-by` | Grouping for stats (see below) |
+| `--limit` | Limit results (default: 20) |
+| `--snapshot` | Analyze current file state instead of commits |
 | `--json FILE` | Export to JSON |
 | `--markdown FILE` | Export to Markdown |
 | `--linkedin FILE` | Export LinkedIn summary |
@@ -98,6 +156,24 @@ git-activity -s ~/projects --all-exports ./exports/
 | `--badge FILE` | Export README badge |
 | `--all-exports DIR` | Export all formats |
 | `-q, --quiet` | Suppress output |
+
+### Grouping Options
+
+| Grouping | Description |
+|----------|-------------|
+| `repo` | Total LOC per repository (all time) |
+| `category` | Total LOC per category (code, tests, docs, etc.) |
+| `lang` | Total LOC per language |
+| `week` | Weekly totals |
+| `week-repo` | Weekly breakdown by repository |
+| `week-category` | Weekly breakdown by category |
+| `week-repo-category` | Weekly per repo with category breakdown |
+| `week-lang` | Weekly breakdown by language |
+| `month` | Monthly totals |
+| `month-repo` | Monthly breakdown by repository |
+| `month-category` | Monthly breakdown by category |
+| `month-repo-category` | Monthly per repo with category breakdown |
+| `month-lang` | Monthly breakdown by language |
 
 ## TypeScript/JavaScript Usage
 
@@ -172,6 +248,49 @@ Code Quality:
 🔧 Top Languages: TypeScript, Rust, Python
 
 #coding #developer #programming #softwareengineering
+```
+
+### GitHub Stats Output
+```
+================================================================================
+ACTIVITY BREAKDOWN
+================================================================================
+
+Repository                      Commits    Additions    Deletions      Net LOC
+--------------------------------------------------------------------------------
+my-awesome-app                       99      +537899         6157      +531742
+api-service                          42      +360298       177905      +182393
+frontend-dashboard                   87      +336652       203818      +132834
+
+Category                  Files    Additions    Deletions      Net LOC
+----------------------------------------------------------------------
+code                      18745     +3167051       563619     +2603432  ████████████████████
+docs                       5762     +2025016       195885     +1829131  ████████████████████
+tests                      2886      +486513       250849      +235664  █████████
+```
+
+### Snapshot Output
+```
+================================================================================
+CURRENT STATE SNAPSHOT (Main Branch LOC)
+================================================================================
+
+Total: 156 files, 45.2K lines of code
+
+BY CATEGORY
+--------------------------------------------------------------------------------
+Category                    Files           Lines
+code                           98           32.1K  ███████████████████
+tests                          32            8.5K  ████████
+docs                           18            3.2K  ███
+config                          8            1.4K  █
+
+BY LANGUAGE
+--------------------------------------------------------------------------------
+Language                    Files           Lines
+Rust                           45           25.3K  ████████████████████
+TypeScript                     38           12.8K  ██████████
+Markdown                       18            3.2K  ██
 ```
 
 ## Use Cases

@@ -109,7 +109,7 @@ struct Cli {
     #[arg(long, value_name = "MONTH")]
     month: Option<String>,
 
-    /// Group stats by time period: week, week-filetype, week-repo, week-repo-filetype, week-category, week-repo-category, week-lang, month, month-repo, month-filetype, month-category, month-repo-category, month-lang
+    /// Group stats: repo, category, lang, week, week-repo, week-category, week-lang, month, month-repo, month-category, month-lang (and more variants)
     #[arg(long, value_name = "GROUPING")]
     group_by: Option<String>,
 
@@ -395,7 +395,7 @@ fn main() {
                 Some(g) => g,
                 None => {
                     eprintln!("Invalid --group-by value: {}", group_by_str);
-                    eprintln!("Valid options: week, week-filetype, week-repo, week-repo-filetype, week-category, week-repo-category, week-lang, month, month-repo, month-filetype, month-category, month-repo-category, month-lang");
+                    eprintln!("Valid options: repo, category, lang, week, week-filetype, week-repo, week-repo-filetype, week-category, week-repo-category, week-lang, month, month-repo, month-filetype, month-category, month-repo-category, month-lang");
                     std::process::exit(1);
                 }
             };

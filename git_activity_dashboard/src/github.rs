@@ -8,6 +8,7 @@
 
 use git2::{Cred, FetchOptions, RemoteCallbacks};
 use ignore::gitignore::Gitignore;
+use rayon::prelude::*;
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::fs;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::git::load_gitignore;
 
@@ -127,6 +129,9 @@ pub enum StatsGrouping {
     MonthCategory,
     MonthRepoCategory,
     MonthLanguage,
+    Repo,      // Total per repo (no time grouping)
+    Category,  // Total per category (no time grouping)
+    Language,  // Total per language (no time grouping)
 }
 
 impl StatsGrouping {
@@ -145,6 +150,9 @@ impl StatsGrouping {
             "month-category" | "monthcategory" | "month-cat" => Some(Self::MonthCategory),
             "month-repo-category" | "monthrepocategory" | "month-repo-cat" => Some(Self::MonthRepoCategory),
             "month-lang" | "monthlang" | "month-language" => Some(Self::MonthLanguage),
+            "repo" | "repos" | "repository" => Some(Self::Repo),
+            "category" | "cat" | "categories" => Some(Self::Category),
+            "lang" | "language" | "languages" => Some(Self::Language),
             _ => None,
         }
     }
@@ -365,28 +373,42 @@ pub struct SnapshotStats {
 }
 
 impl SnapshotStats {
-    /// Analyze the current file state of repositories
+    /// Analyze the current file state of repositories (parallelized)
     pub fn analyze(repo_paths: &[PathBuf]) -> Self {
-        let mut repos = Vec::new();
+        let completed = AtomicU64::new(0);
+        let total = repo_paths.len() as u64;
+
+        // Analyze repos in parallel
+        let snapshots: Vec<RepoSnapshot> = repo_paths
+            .par_iter()
+            .map(|repo_path| {
+                let repo_name = repo_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
+                let snapshot = Self::analyze_repo(repo_path, &repo_name);
+
+                // Update progress counter
+                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                print!("\r  Analyzing repos... {}/{} ", done, total);
+                std::io::Write::flush(&mut std::io::stdout()).ok();
+
+                snapshot
+            })
+            .collect();
+
+        println!("✓");
+
+        // Aggregate results (sequential, but fast)
         let mut total_files = 0u64;
         let mut total_lines = 0u64;
         let mut by_category: HashMap<String, (u64, u64)> = HashMap::new();
         let mut by_language: HashMap<String, (u64, u64)> = HashMap::new();
         let mut by_repo: HashMap<String, (u64, u64)> = HashMap::new();
 
-        for repo_path in repo_paths {
-            let repo_name = repo_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            print!("  {} ", repo_name);
-            std::io::Write::flush(&mut std::io::stdout()).ok();
-
-            let snapshot = Self::analyze_repo(repo_path, &repo_name);
-
-            // Aggregate into totals
+        for snapshot in &snapshots {
             total_files += snapshot.files;
             total_lines += snapshot.lines;
 
@@ -402,14 +424,11 @@ impl SnapshotStats {
                 entry.1 += lines;
             }
 
-            by_repo.insert(repo_name.clone(), (snapshot.files, snapshot.lines));
-
-            println!("✓");
-            repos.push(snapshot);
+            by_repo.insert(snapshot.name.clone(), (snapshot.files, snapshot.lines));
         }
 
         Self {
-            repos,
+            repos: snapshots,
             total_files,
             total_lines,
             by_category,
@@ -2438,6 +2457,99 @@ impl GitHubClient {
                     }
                 }
             }
+
+            StatsGrouping::Repo => {
+                // Aggregate total LOC per repo (no time grouping)
+                let mut by_repo: HashMap<String, (u64, u64, u64)> = HashMap::new();
+
+                for s in stats {
+                    let entry = by_repo.entry(s.repo.clone()).or_insert((0, 0, 0));
+                    entry.0 += s.commits;
+                    entry.1 += s.additions;
+                    entry.2 += s.deletions;
+                }
+
+                println!("\n{:30} {:>8} {:>12} {:>12} {:>12}", "Repository", "Commits", "Additions", "Deletions", "Net LOC");
+                println!("{}", "-".repeat(80));
+
+                let mut sorted: Vec<_> = by_repo.into_iter().collect();
+                sorted.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by additions desc
+
+                for (repo, (commits, additions, deletions)) in sorted.iter().take(period_limit) {
+                    let net = *additions as i64 - *deletions as i64;
+                    let bar = "█".repeat(std::cmp::min((*additions / 50000) as usize, 20));
+                    println!("{:30} {:>8} {:>+12} {:>12} {:>+12}  {}",
+                        repo, commits, additions, deletions, net, bar);
+                }
+            }
+
+            StatsGrouping::Category => {
+                // Aggregate total LOC per category (no time grouping)
+                let mut by_category: HashMap<String, (u64, u64, u64)> = HashMap::new();
+                let mut excluded_count: u64 = 0;
+
+                for s in stats {
+                    for file_stat in &s.file_stats {
+                        let category = FileCategory::from_path(&file_stat.path);
+                        if category.is_excluded() {
+                            excluded_count += 1;
+                            continue;
+                        }
+                        let entry = by_category.entry(category.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1; // file count
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
+                    }
+                }
+
+                if excluded_count > 0 {
+                    println!("\n(Excluded {} files: lock files, node_modules, vendor)", excluded_count);
+                }
+
+                println!("\n{:20} {:>10} {:>12} {:>12} {:>12}", "Category", "Files", "Additions", "Deletions", "Net LOC");
+                println!("{}", "-".repeat(70));
+
+                let mut sorted: Vec<_> = by_category.into_iter().collect();
+                sorted.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by additions desc
+
+                for (cat, (files, additions, deletions)) in sorted {
+                    let net = additions as i64 - deletions as i64;
+                    let bar = "█".repeat(std::cmp::min((additions / 50000) as usize, 20));
+                    println!("{:20} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                        cat, files, additions, deletions, net, bar);
+                }
+            }
+
+            StatsGrouping::Language => {
+                // Aggregate total LOC per language (no time grouping)
+                let mut by_lang: HashMap<String, (u64, u64, u64)> = HashMap::new();
+
+                for s in stats {
+                    for file_stat in &s.file_stats {
+                        if FileCategory::from_path(&file_stat.path).is_excluded() {
+                            continue;
+                        }
+                        let lang = ProgrammingLanguage::from_path(&file_stat.path);
+                        let entry = by_lang.entry(lang.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1; // file count
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
+                    }
+                }
+
+                println!("\n{:20} {:>10} {:>12} {:>12} {:>12}", "Language", "Files", "Additions", "Deletions", "Net LOC");
+                println!("{}", "-".repeat(70));
+
+                let mut sorted: Vec<_> = by_lang.into_iter().collect();
+                sorted.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by additions desc
+
+                for (lang, (files, additions, deletions)) in sorted.iter().take(period_limit) {
+                    let net = *additions as i64 - *deletions as i64;
+                    let bar = "█".repeat(std::cmp::min((*additions / 50000) as usize, 20));
+                    println!("{:20} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                        lang, files, additions, deletions, net, bar);
+                }
+            }
         }
 
         println!("\n{}\n", "=".repeat(80));
@@ -2892,6 +3004,22 @@ mod tests {
         assert_eq!(StatsGrouping::from_str("weekly"), None);
         assert_eq!(StatsGrouping::from_str(""), None);
         assert_eq!(StatsGrouping::from_str("day"), None);
+    }
+
+    #[test]
+    fn test_stats_grouping_aggregate_variants() {
+        // Repo grouping
+        assert_eq!(StatsGrouping::from_str("repo"), Some(StatsGrouping::Repo));
+        assert_eq!(StatsGrouping::from_str("repos"), Some(StatsGrouping::Repo));
+        assert_eq!(StatsGrouping::from_str("repository"), Some(StatsGrouping::Repo));
+        // Category grouping
+        assert_eq!(StatsGrouping::from_str("category"), Some(StatsGrouping::Category));
+        assert_eq!(StatsGrouping::from_str("cat"), Some(StatsGrouping::Category));
+        assert_eq!(StatsGrouping::from_str("categories"), Some(StatsGrouping::Category));
+        // Language grouping
+        assert_eq!(StatsGrouping::from_str("lang"), Some(StatsGrouping::Language));
+        assert_eq!(StatsGrouping::from_str("language"), Some(StatsGrouping::Language));
+        assert_eq!(StatsGrouping::from_str("languages"), Some(StatsGrouping::Language));
     }
 
     // =====================================================
