@@ -94,6 +94,8 @@ pub struct WeeklyRepoStats {
     pub additions: u64,
     pub deletions: u64,
     pub file_types: std::collections::HashMap<String, FileTypeWeeklyStats>,
+    #[serde(default)]
+    pub file_paths: Vec<String>, // Full paths for categorization
 }
 
 /// Weekly stats per file type
@@ -111,8 +113,10 @@ pub enum StatsGrouping {
     WeekFileType,
     WeekRepo,
     WeekRepoFileType,
+    WeekCategory,
     Month,
     MonthFileType,
+    MonthCategory,
 }
 
 impl StatsGrouping {
@@ -122,8 +126,10 @@ impl StatsGrouping {
             "week-filetype" | "weekfiletype" | "week-file" => Some(Self::WeekFileType),
             "week-repo" | "weekrepo" => Some(Self::WeekRepo),
             "week-repo-filetype" | "weekrepofiletype" | "week-repo-file" => Some(Self::WeekRepoFileType),
+            "week-category" | "weekcategory" | "week-cat" => Some(Self::WeekCategory),
             "month" => Some(Self::Month),
             "month-filetype" | "monthfiletype" | "month-file" => Some(Self::MonthFileType),
+            "month-category" | "monthcategory" | "month-cat" => Some(Self::MonthCategory),
             _ => None,
         }
     }
@@ -135,6 +141,8 @@ pub struct CachedRepoCommits {
     pub repo: String,
     pub fetched_at: String,
     pub commits: Vec<CachedCommit>,
+    #[serde(default)]
+    pub version: u32, // Cache version for invalidation
 }
 
 /// Cached commit details
@@ -145,6 +153,87 @@ pub struct CachedCommit {
     pub additions: u64,
     pub deletions: u64,
     pub file_extensions: Vec<String>,
+    #[serde(default)]
+    pub file_paths: Vec<String>, // Full file paths for categorization
+}
+
+/// File category based on folder patterns
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum FileCategory {
+    Docs,      // docs/, documentation/, README, etc.
+    Specs,     // specs/, spec/, specifications/, schemas/
+    Tests,     // tests/, test/, __tests__/, *_test.*, *_spec.*
+    Config,    // .json, .yaml, .toml in root or config/
+    Code,      // Everything else
+}
+
+impl FileCategory {
+    pub fn from_path(path: &str) -> Self {
+        let path_lower = path.to_lowercase();
+
+        // Check folder patterns
+        if path_lower.contains("/docs/")
+            || path_lower.contains("/documentation/")
+            || path_lower.starts_with("docs/")
+            || path_lower.starts_with("documentation/")
+            || path_lower.contains("readme")
+            || path_lower.contains("changelog")
+            || path_lower.contains("contributing")
+        {
+            return Self::Docs;
+        }
+
+        if path_lower.contains("/specs/")
+            || path_lower.contains("/spec/")
+            || path_lower.contains("/specifications/")
+            || path_lower.contains("/schemas/")
+            || path_lower.contains("/schema/")
+            || path_lower.starts_with("specs/")
+            || path_lower.starts_with("spec/")
+        {
+            return Self::Specs;
+        }
+
+        if path_lower.contains("/tests/")
+            || path_lower.contains("/test/")
+            || path_lower.contains("/__tests__/")
+            || path_lower.contains("_test.")
+            || path_lower.contains("_spec.")
+            || path_lower.contains(".test.")
+            || path_lower.contains(".spec.")
+            || path_lower.starts_with("tests/")
+            || path_lower.starts_with("test/")
+        {
+            return Self::Tests;
+        }
+
+        // Config files in root or config folders
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        if (ext == "json" || ext == "yaml" || ext == "yml" || ext == "toml")
+            && (path_lower.contains("/config/")
+                || path_lower.contains("/configuration/")
+                || !path.contains("/")  // Root level
+                || path_lower.starts_with("config/"))
+        {
+            return Self::Config;
+        }
+
+        Self::Code
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Docs => "docs",
+            Self::Specs => "specs",
+            Self::Tests => "tests",
+            Self::Config => "config",
+            Self::Code => "code",
+        }
+    }
 }
 
 /// Cache manager for GitHub API responses
@@ -168,6 +257,8 @@ impl GitHubCache {
         self.cache_dir.join(format!("{}.json", repo.replace('/', "_")))
     }
 
+    const CACHE_VERSION: u32 = 2; // Increment when cache format changes
+
     pub fn get(&self, repo: &str) -> Option<CachedRepoCommits> {
         use chrono::{Datelike, Utc};
 
@@ -175,6 +266,11 @@ impl GitHubCache {
         if path.exists() {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(cached) = serde_json::from_str::<CachedRepoCommits>(&content) {
+                    // Check cache version - invalidate old format
+                    if cached.version < Self::CACHE_VERSION {
+                        return None;
+                    }
+
                     // Get current week
                     let now = Utc::now();
                     let current_week = format!("{}-W{:02}", now.iso_week().year(), now.iso_week().week());
@@ -847,8 +943,8 @@ impl GitHubClient {
     }
 
     /// Fetch commit stats (additions/deletions) for a repository with caching
-    pub fn get_repo_commits_stats(&self, owner: &str, repo: &str, _since: Option<&str>, _until: Option<&str>) -> Result<Vec<(String, u64, u64, u64, Vec<String>)>, String> {
-        // Returns: (week, commits, additions, deletions, file_extensions)
+    pub fn get_repo_commits_stats(&self, owner: &str, repo: &str, _since: Option<&str>, _until: Option<&str>) -> Result<Vec<(String, u64, u64, u64, Vec<String>, Vec<String>)>, String> {
+        // Returns: (week, commits, additions, deletions, file_extensions, file_paths)
         use chrono::{DateTime, Datelike, Utc};
 
         let cache = GitHubCache::new();
@@ -857,18 +953,19 @@ impl GitHubClient {
         // Check cache first
         if let Some(cached) = cache.get(&repo_key) {
             // Convert cached data to result format
-            let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>)> = HashMap::new();
+            let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>, Vec<String>)> = HashMap::new();
             for commit in cached.commits {
-                let entry = weekly_stats.entry(commit.week.clone()).or_insert((0, 0, 0, Vec::new()));
+                let entry = weekly_stats.entry(commit.week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new()));
                 entry.0 += 1;
                 entry.1 += commit.additions;
                 entry.2 += commit.deletions;
                 entry.3.extend(commit.file_extensions);
+                entry.4.extend(commit.file_paths);
             }
             let mut result: Vec<_> = weekly_stats
                 .into_iter()
-                .map(|(week, (commits, additions, deletions, exts))| {
-                    (week, commits, additions, deletions, exts)
+                .map(|(week, (commits, additions, deletions, exts, paths))| {
+                    (week, commits, additions, deletions, exts, paths)
                 })
                 .collect();
             result.sort_by(|a, b| b.0.cmp(&a.0));
@@ -941,7 +1038,7 @@ impl GitHubClient {
         }
 
         // Group by week and fetch stats for each commit
-        let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>)> = HashMap::new();
+        let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>, Vec<String>)> = HashMap::new();
         let mut cached_commits = Vec::new();
 
         for (sha, date_str) in all_commits.iter().take(100) { // Limit API calls
@@ -993,6 +1090,7 @@ impl GitHubClient {
                         let mut additions = 0u64;
                         let mut deletions = 0u64;
                         let mut file_exts = Vec::new();
+                        let mut file_paths = Vec::new();
 
                         if let Some(stats) = commit_data.stats {
                             additions = stats.additions;
@@ -1000,7 +1098,8 @@ impl GitHubClient {
                         }
 
                         if let Some(files) = commit_data.files {
-                            for file in files {
+                            for file in &files {
+                                file_paths.push(file.filename.clone());
                                 if let Some(ext) = std::path::Path::new(&file.filename)
                                     .extension()
                                     .and_then(|e| e.to_str())
@@ -1011,11 +1110,12 @@ impl GitHubClient {
                         }
 
                         // Store in weekly stats
-                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new()));
+                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new(), Vec::new()));
                         entry.0 += 1;
                         entry.1 += additions;
                         entry.2 += deletions;
                         entry.3.extend(file_exts.clone());
+                        entry.4.extend(file_paths.clone());
 
                         // Store for cache
                         cached_commits.push(CachedCommit {
@@ -1024,6 +1124,7 @@ impl GitHubClient {
                             additions,
                             deletions,
                             file_extensions: file_exts,
+                            file_paths,
                         });
                     }
                 }
@@ -1035,14 +1136,15 @@ impl GitHubClient {
             repo: repo_key.clone(),
             fetched_at: chrono::Utc::now().to_rfc3339(),
             commits: cached_commits,
+            version: GitHubCache::CACHE_VERSION,
         };
         cache.set(&repo_key, &cached_data);
 
         // Convert to sorted vector
         let mut result: Vec<_> = weekly_stats
             .into_iter()
-            .map(|(week, (commits, additions, deletions, exts))| {
-                (week, commits, additions, deletions, exts)
+            .map(|(week, (commits, additions, deletions, exts, paths))| {
+                (week, commits, additions, deletions, exts, paths)
             })
             .collect();
 
@@ -1067,7 +1169,7 @@ impl GitHubClient {
 
             match self.get_repo_commits_stats(owner, &repo.name, None, None) {
                 Ok(commits) => {
-                    for (week, commit_count, additions, deletions, file_exts) in commits {
+                    for (week, commit_count, additions, deletions, file_exts, file_paths) in commits {
                         let week_entry = all_stats.entry(week.clone()).or_insert_with(HashMap::new);
 
                         let repo_entry = week_entry.entry(repo.name.clone()).or_insert_with(|| {
@@ -1078,12 +1180,14 @@ impl GitHubClient {
                                 additions: 0,
                                 deletions: 0,
                                 file_types: HashMap::new(),
+                                file_paths: Vec::new(),
                             }
                         });
 
                         repo_entry.commits += commit_count;
                         repo_entry.additions += additions;
                         repo_entry.deletions += deletions;
+                        repo_entry.file_paths.extend(file_paths);
 
                         // Count file types
                         for ext in file_exts {
@@ -1342,6 +1446,101 @@ impl GitHubClient {
                             for (ext, ft) in sorted_types.iter().take(8) {
                                 println!("    .{:15} {:>5} changes", ext, ft.commits);
                             }
+                        }
+                    }
+                }
+            }
+
+            StatsGrouping::WeekCategory => {
+                // Aggregate by week and file category (docs, specs, tests, config, code)
+                let mut weekly_categories: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+                for s in stats {
+                    let week_entry = weekly_categories.entry(s.week.clone()).or_insert_with(HashMap::new);
+
+                    // Categorize each file path
+                    for path in &s.file_paths {
+                        let category = FileCategory::from_path(path);
+                        let entry = week_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1; // file count
+                    }
+
+                    // Also add totals for additions/deletions per category based on file_paths
+                    let files_per_commit = std::cmp::max(1, s.file_paths.len() as u64);
+                    let additions_per_file = s.additions / files_per_commit;
+                    let deletions_per_file = s.deletions / files_per_commit;
+
+                    for path in &s.file_paths {
+                        let category = FileCategory::from_path(path);
+                        let entry = week_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.1 += additions_per_file;
+                        entry.2 += deletions_per_file;
+                    }
+                }
+
+                let mut sorted_weeks: Vec<_> = weekly_categories.keys().cloned().collect();
+                sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+                for week in sorted_weeks.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
+                    println!("Week: {}", week);
+                    println!("{}", "-".repeat(80));
+                    println!("{:15} {:>10} {:>12} {:>12} {:>12}", "Category", "Files", "Additions", "Deletions", "Net LOC");
+
+                    if let Some(categories) = weekly_categories.get(week) {
+                        // Sort by file count descending
+                        let mut sorted_cats: Vec<_> = categories.iter().collect();
+                        sorted_cats.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+
+                        for (cat, (files, additions, deletions)) in sorted_cats {
+                            let net = *additions as i64 - *deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(*files as usize / 2, 15));
+                            println!("{:15} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                cat, files, additions, deletions, net, bar);
+                        }
+                    }
+                }
+            }
+
+            StatsGrouping::MonthCategory => {
+                // Aggregate by month and file category
+                let mut monthly_categories: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+                for s in stats {
+                    let month = Self::week_to_month(&s.week);
+                    let month_entry = monthly_categories.entry(month).or_insert_with(HashMap::new);
+
+                    // Categorize each file path
+                    let files_per_commit = std::cmp::max(1, s.file_paths.len() as u64);
+                    let additions_per_file = s.additions / files_per_commit;
+                    let deletions_per_file = s.deletions / files_per_commit;
+
+                    for path in &s.file_paths {
+                        let category = FileCategory::from_path(path);
+                        let entry = month_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1; // file count
+                        entry.1 += additions_per_file;
+                        entry.2 += deletions_per_file;
+                    }
+                }
+
+                let mut sorted_months: Vec<_> = monthly_categories.keys().cloned().collect();
+                sorted_months.sort_by(|a, b| b.cmp(a));
+
+                for month in sorted_months.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
+                    println!("Month: {}", month);
+                    println!("{}", "-".repeat(80));
+                    println!("{:15} {:>10} {:>12} {:>12} {:>12}", "Category", "Files", "Additions", "Deletions", "Net LOC");
+
+                    if let Some(categories) = monthly_categories.get(month) {
+                        // Sort by file count descending
+                        let mut sorted_cats: Vec<_> = categories.iter().collect();
+                        sorted_cats.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+
+                        for (cat, (files, additions, deletions)) in sorted_cats {
+                            let net = *additions as i64 - *deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(*files as usize / 5, 15));
+                            println!("{:15} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                cat, files, additions, deletions, net, bar);
                         }
                     }
                 }
