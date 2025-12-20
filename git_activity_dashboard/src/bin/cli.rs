@@ -2,7 +2,7 @@ use clap::Parser;
 use git_activity_dashboard::{
     GitAnalyzer, BadgeExporter, LinkedInExporter, MarkdownExporter, PortfolioExporter,
     analyze_repo, find_repos, is_git_repo, AnalyzeOptions,
-    GitHubClient, GitHubScanOptions,
+    GitHubClient, GitHubScanOptions, StatsGrouping,
     parse_date, get_month_range, get_last_month_range,
 };
 use std::fs;
@@ -108,6 +108,10 @@ struct Cli {
     /// Filter to repos with activity in a specific month (e.g., "november", "2024-11")
     #[arg(long, value_name = "MONTH")]
     month: Option<String>,
+
+    /// Group stats by time period: week, week-repo, week-repo-filetype
+    #[arg(long, value_name = "GROUPING")]
+    group_by: Option<String>,
 }
 
 fn print_summary(analyzer: &GitAnalyzer) {
@@ -377,6 +381,69 @@ fn main() {
             until,
         };
 
+        // Check if weekly grouping is requested
+        if let Some(ref group_by_str) = cli.group_by {
+            let grouping = match StatsGrouping::from_str(group_by_str) {
+                Some(g) => g,
+                None => {
+                    eprintln!("Invalid --group-by value: {}", group_by_str);
+                    eprintln!("Valid options: week, week-repo, week-repo-filetype");
+                    std::process::exit(1);
+                }
+            };
+
+            // Get the authenticated user for API calls
+            let owner = match client.get_authenticated_user() {
+                Ok(u) => u,
+                Err(e) => {
+                    eprintln!("Error getting authenticated user: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            // First get list of repos
+            let repos = match client.list_repos(None) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("Error listing repos: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            // Filter repos based on options
+            let filtered_repos: Vec<_> = repos
+                .into_iter()
+                .filter(|r| options.include_forks || !r.fork)
+                .filter(|r| options.include_archived || !r.archived)
+                .collect();
+
+            println!("Fetching weekly stats for {} repositories...\n", filtered_repos.len());
+
+            match client.get_weekly_stats(&filtered_repos, &grouping, &owner) {
+                Ok(weekly_stats) => {
+                    if !cli.quiet {
+                        GitHubClient::print_weekly_stats(&weekly_stats, &grouping);
+                    }
+
+                    // Export to JSON if requested
+                    if let Some(path) = &cli.json {
+                        let json = serde_json::to_string_pretty(&weekly_stats).unwrap_or_default();
+                        fs::write(path, json).expect("Failed to write JSON");
+                        if !cli.quiet {
+                            println!("JSON exported to: {}", path.display());
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error fetching weekly stats: {}", e);
+                    std::process::exit(1);
+                }
+            }
+
+            return;
+        }
+
+        // Regular stats (no grouping)
         match client.get_all_repo_stats(username.as_deref(), &options) {
             Ok(stats) => {
                 if !cli.quiet {

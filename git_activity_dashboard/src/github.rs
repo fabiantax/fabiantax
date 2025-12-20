@@ -60,6 +60,66 @@ pub struct GitHubRepoStats {
     pub estimated_loc: u64,
 }
 
+/// Weekly commit activity for a repository
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeeklyCommitActivity {
+    /// Unix timestamp of the week start (Sunday)
+    pub week: i64,
+    /// Total commits for the week
+    pub total: u64,
+}
+
+/// Weekly stats grouped by different levels
+#[derive(Debug, Clone, Serialize)]
+pub struct WeeklyStats {
+    /// Week start date (ISO format)
+    pub week: String,
+    /// Total commits
+    pub commits: u64,
+    /// Lines added (if available)
+    pub additions: u64,
+    /// Lines deleted (if available)
+    pub deletions: u64,
+}
+
+/// Weekly stats per repository
+#[derive(Debug, Clone, Serialize)]
+pub struct WeeklyRepoStats {
+    pub week: String,
+    pub repo: String,
+    pub commits: u64,
+    pub additions: u64,
+    pub deletions: u64,
+    pub file_types: std::collections::HashMap<String, FileTypeWeeklyStats>,
+}
+
+/// Weekly stats per file type
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct FileTypeWeeklyStats {
+    pub commits: u64,
+    pub additions: u64,
+    pub deletions: u64,
+}
+
+/// Grouping level for stats
+#[derive(Debug, Clone, PartialEq)]
+pub enum StatsGrouping {
+    Week,
+    WeekRepo,
+    WeekRepoFileType,
+}
+
+impl StatsGrouping {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "week" => Some(Self::Week),
+            "week-repo" | "weekrepo" => Some(Self::WeekRepo),
+            "week-repo-filetype" | "weekrepofiletype" | "week-repo-file" => Some(Self::WeekRepoFileType),
+            _ => None,
+        }
+    }
+}
+
 /// Options for GitHub scanning
 #[derive(Debug, Clone)]
 pub struct GitHubScanOptions {
@@ -659,6 +719,369 @@ impl GitHubClient {
         }
 
         println!("\n{}\n", "=".repeat(60));
+    }
+
+    /// Fetch weekly commit activity for a repository
+    pub fn get_repo_commit_activity(&self, owner: &str, repo: &str) -> Result<Vec<WeeklyCommitActivity>, String> {
+        let url = format!(
+            "https://api.github.com/repos/{}/{}/stats/commit_activity",
+            owner, repo
+        );
+
+        let mut request = self
+            .client
+            .get(&url)
+            .header(USER_AGENT, "git-activity-dashboard")
+            .header(ACCEPT, "application/vnd.github+json");
+
+        if let Some(token) = &self.token {
+            request = request.header(AUTHORIZATION, format!("Bearer {}", token));
+        }
+
+        let response = request
+            .send()
+            .map_err(|e| format!("Failed to fetch commit activity: {}", e))?;
+
+        // GitHub may return 202 if stats are being computed
+        if response.status().as_u16() == 202 {
+            return Ok(Vec::new());
+        }
+
+        if !response.status().is_success() {
+            return Ok(Vec::new()); // Silently skip on error
+        }
+
+        let activity: Vec<WeeklyCommitActivity> = response
+            .json()
+            .unwrap_or_default();
+
+        Ok(activity)
+    }
+
+    /// Fetch commit stats (additions/deletions) for a repository within a date range
+    pub fn get_repo_commits_stats(&self, owner: &str, repo: &str, since: Option<&str>, until: Option<&str>) -> Result<Vec<(String, u64, u64, u64, Vec<String>)>, String> {
+        // Returns: (week, commits, additions, deletions, file_extensions)
+        use chrono::{DateTime, Datelike, Utc};
+        use std::collections::HashMap;
+
+        let mut all_commits = Vec::new();
+        let mut page = 1;
+        let per_page = 100;
+
+        loop {
+            let mut url = format!(
+                "https://api.github.com/repos/{}/{}/commits?per_page={}&page={}",
+                owner, repo, per_page, page
+            );
+
+            if let Some(s) = since {
+                url.push_str(&format!("&since={}", s));
+            }
+            if let Some(u) = until {
+                url.push_str(&format!("&until={}", u));
+            }
+
+            let mut request = self
+                .client
+                .get(&url)
+                .header(USER_AGENT, "git-activity-dashboard")
+                .header(ACCEPT, "application/vnd.github+json");
+
+            if let Some(token) = &self.token {
+                request = request.header(AUTHORIZATION, format!("Bearer {}", token));
+            }
+
+            let response = request
+                .send()
+                .map_err(|e| format!("Failed to fetch commits: {}", e))?;
+
+            if !response.status().is_success() {
+                break;
+            }
+
+            #[derive(Deserialize)]
+            struct CommitInfo {
+                sha: String,
+                commit: CommitDetail,
+            }
+
+            #[derive(Deserialize)]
+            struct CommitDetail {
+                author: Option<CommitAuthor>,
+            }
+
+            #[derive(Deserialize)]
+            struct CommitAuthor {
+                date: Option<String>,
+            }
+
+            let commits: Vec<CommitInfo> = response.json().unwrap_or_default();
+
+            if commits.is_empty() {
+                break;
+            }
+
+            for commit in commits {
+                if let Some(author) = &commit.commit.author {
+                    if let Some(date) = &author.date {
+                        all_commits.push((commit.sha, date.clone()));
+                    }
+                }
+            }
+
+            page += 1;
+            if page > 10 {
+                break; // Limit to 1000 commits per repo
+            }
+        }
+
+        // Group by week and fetch stats for each commit
+        let mut weekly_stats: HashMap<String, (u64, u64, u64, Vec<String>)> = HashMap::new();
+
+        for (sha, date_str) in all_commits.iter().take(100) { // Limit API calls
+            // Parse date and get week
+            let week = if let Ok(dt) = DateTime::parse_from_rfc3339(&date_str) {
+                let dt_utc: DateTime<Utc> = dt.into();
+                let iso_week = dt_utc.iso_week();
+                format!("{}-W{:02}", iso_week.year(), iso_week.week())
+            } else {
+                continue;
+            };
+
+            // Fetch commit details for additions/deletions
+            let commit_url = format!(
+                "https://api.github.com/repos/{}/{}/commits/{}",
+                owner, repo, sha
+            );
+
+            let mut request = self
+                .client
+                .get(&commit_url)
+                .header(USER_AGENT, "git-activity-dashboard")
+                .header(ACCEPT, "application/vnd.github+json");
+
+            if let Some(token) = &self.token {
+                request = request.header(AUTHORIZATION, format!("Bearer {}", token));
+            }
+
+            if let Ok(response) = request.send() {
+                if response.status().is_success() {
+                    #[derive(Deserialize)]
+                    struct CommitStats {
+                        stats: Option<StatsDetail>,
+                        files: Option<Vec<FileDetail>>,
+                    }
+
+                    #[derive(Deserialize)]
+                    struct StatsDetail {
+                        additions: u64,
+                        deletions: u64,
+                    }
+
+                    #[derive(Deserialize)]
+                    struct FileDetail {
+                        filename: String,
+                    }
+
+                    if let Ok(commit_data) = response.json::<CommitStats>() {
+                        let entry = weekly_stats.entry(week.clone()).or_insert((0, 0, 0, Vec::new()));
+                        entry.0 += 1; // commits
+
+                        if let Some(stats) = commit_data.stats {
+                            entry.1 += stats.additions;
+                            entry.2 += stats.deletions;
+                        }
+
+                        if let Some(files) = commit_data.files {
+                            for file in files {
+                                if let Some(ext) = std::path::Path::new(&file.filename)
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                {
+                                    entry.3.push(ext.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Convert to sorted vector
+        let mut result: Vec<_> = weekly_stats
+            .into_iter()
+            .map(|(week, (commits, additions, deletions, exts))| {
+                (week, commits, additions, deletions, exts)
+            })
+            .collect();
+
+        result.sort_by(|a, b| b.0.cmp(&a.0)); // Sort by week descending
+        Ok(result)
+    }
+
+    /// Get weekly stats for all repos with specified grouping
+    pub fn get_weekly_stats(
+        &self,
+        repos: &[GitHubRepo],
+        _grouping: &StatsGrouping,
+        owner: &str,
+    ) -> Result<Vec<WeeklyRepoStats>, String> {
+        use std::collections::HashMap;
+
+        let mut all_stats: HashMap<String, HashMap<String, WeeklyRepoStats>> = HashMap::new();
+
+        for repo in repos {
+            print!("  {} ", repo.name);
+            std::io::Write::flush(&mut std::io::stdout()).ok();
+
+            match self.get_repo_commits_stats(owner, &repo.name, None, None) {
+                Ok(commits) => {
+                    for (week, commit_count, additions, deletions, file_exts) in commits {
+                        let week_entry = all_stats.entry(week.clone()).or_insert_with(HashMap::new);
+
+                        let repo_entry = week_entry.entry(repo.name.clone()).or_insert_with(|| {
+                            WeeklyRepoStats {
+                                week: week.clone(),
+                                repo: repo.name.clone(),
+                                commits: 0,
+                                additions: 0,
+                                deletions: 0,
+                                file_types: HashMap::new(),
+                            }
+                        });
+
+                        repo_entry.commits += commit_count;
+                        repo_entry.additions += additions;
+                        repo_entry.deletions += deletions;
+
+                        // Count file types
+                        for ext in file_exts {
+                            let ft = repo_entry.file_types.entry(ext).or_insert_with(FileTypeWeeklyStats::default);
+                            ft.commits += 1;
+                            ft.additions += additions / std::cmp::max(1, commit_count);
+                            ft.deletions += deletions / std::cmp::max(1, commit_count);
+                        }
+                    }
+                    println!("✓");
+                }
+                Err(_) => {
+                    println!("(skipped)");
+                }
+            }
+        }
+
+        // Flatten based on grouping level
+        let mut result = Vec::new();
+        let mut sorted_weeks: Vec<_> = all_stats.keys().cloned().collect();
+        sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+        for week in sorted_weeks {
+            if let Some(repos_map) = all_stats.get(&week) {
+                for (_, repo_stats) in repos_map {
+                    result.push(repo_stats.clone());
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Print weekly stats with specified grouping
+    pub fn print_weekly_stats(stats: &[WeeklyRepoStats], grouping: &StatsGrouping) {
+        use std::collections::HashMap;
+
+        println!("\n{}", "=".repeat(70));
+        println!("WEEKLY ACTIVITY BREAKDOWN");
+        println!("{}", "=".repeat(70));
+
+        match grouping {
+            StatsGrouping::Week => {
+                // Aggregate by week only
+                let mut weekly: HashMap<String, (u64, u64, u64)> = HashMap::new();
+                for s in stats {
+                    let entry = weekly.entry(s.week.clone()).or_insert((0, 0, 0));
+                    entry.0 += s.commits;
+                    entry.1 += s.additions;
+                    entry.2 += s.deletions;
+                }
+
+                let mut sorted: Vec<_> = weekly.into_iter().collect();
+                sorted.sort_by(|a, b| b.0.cmp(&a.0));
+
+                println!("\n{:15} {:>10} {:>12} {:>12}", "Week", "Commits", "Additions", "Deletions");
+                println!("{}", "-".repeat(50));
+
+                for (week, (commits, additions, deletions)) in sorted.iter().take(20) {
+                    let bar = "█".repeat(std::cmp::min(*commits as usize, 30));
+                    println!("{:15} {:>10} {:>+12} {:>-12}  {}", week, commits, additions, deletions, bar);
+                }
+            }
+
+            StatsGrouping::WeekRepo => {
+                // Group by week, then show repos
+                let mut by_week: HashMap<String, Vec<&WeeklyRepoStats>> = HashMap::new();
+                for s in stats {
+                    by_week.entry(s.week.clone()).or_insert_with(Vec::new).push(s);
+                }
+
+                let mut sorted_weeks: Vec<_> = by_week.keys().cloned().collect();
+                sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+                for week in sorted_weeks.iter().take(12) {
+                    println!("\n{}", "-".repeat(70));
+                    println!("Week: {}", week);
+                    println!("{}", "-".repeat(70));
+                    println!("{:30} {:>10} {:>12} {:>12}", "Repository", "Commits", "Additions", "Deletions");
+
+                    if let Some(repos) = by_week.get(week) {
+                        let mut sorted_repos = repos.clone();
+                        sorted_repos.sort_by(|a, b| b.commits.cmp(&a.commits));
+
+                        for repo in sorted_repos.iter().take(10) {
+                            let bar = "█".repeat(std::cmp::min(repo.commits as usize, 20));
+                            println!("{:30} {:>10} {:>+12} {:>-12}  {}",
+                                repo.repo, repo.commits, repo.additions, repo.deletions, bar);
+                        }
+                    }
+                }
+            }
+
+            StatsGrouping::WeekRepoFileType => {
+                // Group by week, repo, and file type
+                let mut by_week: HashMap<String, Vec<&WeeklyRepoStats>> = HashMap::new();
+                for s in stats {
+                    by_week.entry(s.week.clone()).or_insert_with(Vec::new).push(s);
+                }
+
+                let mut sorted_weeks: Vec<_> = by_week.keys().cloned().collect();
+                sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+                for week in sorted_weeks.iter().take(8) {
+                    println!("\n{}", "=".repeat(70));
+                    println!("Week: {}", week);
+                    println!("{}", "=".repeat(70));
+
+                    if let Some(repos) = by_week.get(week) {
+                        let mut sorted_repos = repos.clone();
+                        sorted_repos.sort_by(|a, b| b.commits.cmp(&a.commits));
+
+                        for repo in sorted_repos.iter().take(5) {
+                            println!("\n  {} ({} commits, +{} -{}):",
+                                repo.repo, repo.commits, repo.additions, repo.deletions);
+
+                            let mut sorted_types: Vec<_> = repo.file_types.iter().collect();
+                            sorted_types.sort_by(|a, b| b.1.commits.cmp(&a.1.commits));
+
+                            for (ext, ft) in sorted_types.iter().take(8) {
+                                println!("    .{:15} {:>5} changes", ext, ft.commits);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("\n{}\n", "=".repeat(70));
     }
 
     /// Clone a repository to the specified directory

@@ -32,6 +32,7 @@ pub use git::{analyze_repo, find_repos, is_git_repo, get_head_hash, AnalyzeOptio
 pub use github::{
     GitHubClient, GitHubRepo, GitHubScanOptions, GitHubRepoStats, ScanResult,
     parse_date, get_month_range, get_last_month_range,
+    WeeklyStats, WeeklyRepoStats, FileTypeWeeklyStats, StatsGrouping,
 };
 
 // WASM bindings
