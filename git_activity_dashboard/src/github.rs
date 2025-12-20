@@ -114,9 +114,11 @@ pub enum StatsGrouping {
     WeekRepo,
     WeekRepoFileType,
     WeekCategory,
+    WeekLanguage,
     Month,
     MonthFileType,
     MonthCategory,
+    MonthLanguage,
 }
 
 impl StatsGrouping {
@@ -127,9 +129,11 @@ impl StatsGrouping {
             "week-repo" | "weekrepo" => Some(Self::WeekRepo),
             "week-repo-filetype" | "weekrepofiletype" | "week-repo-file" => Some(Self::WeekRepoFileType),
             "week-category" | "weekcategory" | "week-cat" => Some(Self::WeekCategory),
+            "week-lang" | "weeklang" | "week-language" => Some(Self::WeekLanguage),
             "month" => Some(Self::Month),
             "month-filetype" | "monthfiletype" | "month-file" => Some(Self::MonthFileType),
             "month-category" | "monthcategory" | "month-cat" => Some(Self::MonthCategory),
+            "month-lang" | "monthlang" | "month-language" => Some(Self::MonthLanguage),
             _ => None,
         }
     }
@@ -155,6 +159,166 @@ pub struct CachedCommit {
     pub file_extensions: Vec<String>,
     #[serde(default)]
     pub file_paths: Vec<String>, // Full file paths for categorization
+}
+
+/// Programming language detected from file extension
+/// Follows Single Responsibility Principle - only handles language detection
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+pub enum ProgrammingLanguage {
+    Rust,
+    TypeScript,
+    JavaScript,
+    Python,
+    CSharp,
+    Go,
+    Java,
+    Kotlin,
+    Swift,
+    Ruby,
+    Cpp,
+    C,
+    PHP,
+    Scala,
+    Elixir,
+    Haskell,
+    Shell,
+    SQL,
+    HTML,
+    CSS,
+    Markdown,
+    YAML,
+    JSON,
+    TOML,
+    Other(String),
+}
+
+impl ProgrammingLanguage {
+    /// Detect programming language from file path
+    /// Open/Closed Principle - easy to extend by adding new match arms
+    pub fn from_path(path: &str) -> Self {
+        let ext = std::path::Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        match ext.as_str() {
+            // Rust
+            "rs" => Self::Rust,
+
+            // TypeScript (check before JavaScript)
+            "ts" | "tsx" | "mts" | "cts" => Self::TypeScript,
+
+            // JavaScript
+            "js" | "jsx" | "mjs" | "cjs" => Self::JavaScript,
+
+            // Python
+            "py" | "pyw" | "pyi" | "pyx" => Self::Python,
+
+            // C#
+            "cs" | "csx" => Self::CSharp,
+
+            // Go
+            "go" => Self::Go,
+
+            // Java
+            "java" => Self::Java,
+
+            // Kotlin
+            "kt" | "kts" => Self::Kotlin,
+
+            // Swift
+            "swift" => Self::Swift,
+
+            // Ruby
+            "rb" | "rake" | "gemspec" => Self::Ruby,
+
+            // C++
+            "cpp" | "cc" | "cxx" | "hpp" | "hxx" | "h++" => Self::Cpp,
+
+            // C
+            "c" | "h" => Self::C,
+
+            // PHP
+            "php" | "php3" | "php4" | "php5" | "phtml" => Self::PHP,
+
+            // Scala
+            "scala" | "sc" => Self::Scala,
+
+            // Elixir
+            "ex" | "exs" => Self::Elixir,
+
+            // Haskell
+            "hs" | "lhs" => Self::Haskell,
+
+            // Shell
+            "sh" | "bash" | "zsh" | "fish" | "ps1" | "psm1" => Self::Shell,
+
+            // SQL
+            "sql" => Self::SQL,
+
+            // HTML
+            "html" | "htm" | "xhtml" => Self::HTML,
+
+            // CSS
+            "css" | "scss" | "sass" | "less" | "styl" => Self::CSS,
+
+            // Markdown
+            "md" | "markdown" | "mdx" => Self::Markdown,
+
+            // YAML
+            "yaml" | "yml" => Self::YAML,
+
+            // JSON
+            "json" | "jsonc" | "json5" => Self::JSON,
+
+            // TOML
+            "toml" => Self::TOML,
+
+            // Other - store the extension for visibility
+            other if !other.is_empty() => Self::Other(other.to_string()),
+            _ => Self::Other("unknown".to_string()),
+        }
+    }
+
+    /// Get human-readable name for the language
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Rust => "Rust",
+            Self::TypeScript => "TypeScript",
+            Self::JavaScript => "JavaScript",
+            Self::Python => "Python",
+            Self::CSharp => "C#",
+            Self::Go => "Go",
+            Self::Java => "Java",
+            Self::Kotlin => "Kotlin",
+            Self::Swift => "Swift",
+            Self::Ruby => "Ruby",
+            Self::Cpp => "C++",
+            Self::C => "C",
+            Self::PHP => "PHP",
+            Self::Scala => "Scala",
+            Self::Elixir => "Elixir",
+            Self::Haskell => "Haskell",
+            Self::Shell => "Shell",
+            Self::SQL => "SQL",
+            Self::HTML => "HTML",
+            Self::CSS => "CSS",
+            Self::Markdown => "Markdown",
+            Self::YAML => "YAML",
+            Self::JSON => "JSON",
+            Self::TOML => "TOML",
+            Self::Other(ext) => ext,
+        }
+    }
+
+    /// Check if this is a programming language (not markup/config)
+    pub fn is_code(&self) -> bool {
+        !matches!(
+            self,
+            Self::Markdown | Self::YAML | Self::JSON | Self::TOML | Self::HTML | Self::CSS
+        )
+    }
 }
 
 /// File category based on folder patterns
@@ -1700,6 +1864,103 @@ impl GitHubClient {
                     }
                 }
             }
+
+            StatsGrouping::WeekLanguage => {
+                // Aggregate by week and programming language
+                let mut weekly_langs: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+
+                for s in stats {
+                    let week_entry = weekly_langs.entry(s.week.clone()).or_insert_with(HashMap::new);
+
+                    // Filter excluded files and categorize by language
+                    let valid_paths: Vec<_> = s.file_paths.iter()
+                        .filter(|p| !FileCategory::from_path(p).is_excluded())
+                        .collect();
+
+                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
+                    let additions_per_file = s.additions / files_per_commit;
+                    let deletions_per_file = s.deletions / files_per_commit;
+
+                    for path in valid_paths {
+                        let lang = ProgrammingLanguage::from_path(path);
+                        let entry = week_entry.entry(lang.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1;
+                        entry.1 += additions_per_file;
+                        entry.2 += deletions_per_file;
+                    }
+                }
+
+                let mut sorted_weeks: Vec<_> = weekly_langs.keys().cloned().collect();
+                sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+                for week in sorted_weeks.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
+                    println!("Week: {}", week);
+                    println!("{}", "-".repeat(80));
+                    println!("{:15} {:>10} {:>12} {:>12} {:>12}", "Language", "Files", "Additions", "Deletions", "Net LOC");
+
+                    if let Some(langs) = weekly_langs.get(week) {
+                        let mut sorted_langs: Vec<_> = langs.iter().collect();
+                        sorted_langs.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+
+                        for (lang, (files, additions, deletions)) in sorted_langs.iter().take(15) {
+                            let net = *additions as i64 - *deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(*files as usize / 2, 15));
+                            println!("{:15} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                lang, files, additions, deletions, net, bar);
+                        }
+                    }
+                }
+            }
+
+            StatsGrouping::MonthLanguage => {
+                // Aggregate by month and programming language
+                let mut monthly_langs: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
+
+                for s in stats {
+                    let month = Self::week_to_month(&s.week);
+                    let month_entry = monthly_langs.entry(month).or_insert_with(HashMap::new);
+
+                    // Filter excluded files and categorize by language
+                    let valid_paths: Vec<_> = s.file_paths.iter()
+                        .filter(|p| !FileCategory::from_path(p).is_excluded())
+                        .collect();
+
+                    let files_per_commit = std::cmp::max(1, valid_paths.len() as u64);
+                    let additions_per_file = s.additions / files_per_commit;
+                    let deletions_per_file = s.deletions / files_per_commit;
+
+                    for path in valid_paths {
+                        let lang = ProgrammingLanguage::from_path(path);
+                        let entry = month_entry.entry(lang.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1;
+                        entry.1 += additions_per_file;
+                        entry.2 += deletions_per_file;
+                    }
+                }
+
+                let mut sorted_months: Vec<_> = monthly_langs.keys().cloned().collect();
+                sorted_months.sort_by(|a, b| b.cmp(a));
+
+                for month in sorted_months.iter().take(period_limit) {
+                    println!("\n{}", "-".repeat(80));
+                    println!("Month: {}", month);
+                    println!("{}", "-".repeat(80));
+                    println!("{:15} {:>10} {:>12} {:>12} {:>12}", "Language", "Files", "Additions", "Deletions", "Net LOC");
+
+                    if let Some(langs) = monthly_langs.get(month) {
+                        let mut sorted_langs: Vec<_> = langs.iter().collect();
+                        sorted_langs.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+
+                        for (lang, (files, additions, deletions)) in sorted_langs.iter().take(15) {
+                            let net = *additions as i64 - *deletions as i64;
+                            let bar = "█".repeat(std::cmp::min(*files as usize / 5, 15));
+                            println!("{:15} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                lang, files, additions, deletions, net, bar);
+                        }
+                    }
+                }
+            }
         }
 
         println!("\n{}\n", "=".repeat(80));
@@ -2006,5 +2267,102 @@ mod tests {
         assert_eq!(FileCategory::Generated.as_str(), "generated");
         assert_eq!(FileCategory::Assets.as_str(), "assets");
         assert_eq!(FileCategory::Excluded.as_str(), "excluded");
+    }
+
+    // =====================================================
+    // ProgrammingLanguage Tests
+    // =====================================================
+
+    #[test]
+    fn test_lang_rust() {
+        assert_eq!(ProgrammingLanguage::from_path("src/main.rs"), ProgrammingLanguage::Rust);
+        assert_eq!(ProgrammingLanguage::from_path("lib.rs"), ProgrammingLanguage::Rust);
+    }
+
+    #[test]
+    fn test_lang_typescript() {
+        assert_eq!(ProgrammingLanguage::from_path("src/app.ts"), ProgrammingLanguage::TypeScript);
+        assert_eq!(ProgrammingLanguage::from_path("component.tsx"), ProgrammingLanguage::TypeScript);
+        assert_eq!(ProgrammingLanguage::from_path("module.mts"), ProgrammingLanguage::TypeScript);
+    }
+
+    #[test]
+    fn test_lang_javascript() {
+        assert_eq!(ProgrammingLanguage::from_path("index.js"), ProgrammingLanguage::JavaScript);
+        assert_eq!(ProgrammingLanguage::from_path("component.jsx"), ProgrammingLanguage::JavaScript);
+        assert_eq!(ProgrammingLanguage::from_path("module.mjs"), ProgrammingLanguage::JavaScript);
+    }
+
+    #[test]
+    fn test_lang_python() {
+        assert_eq!(ProgrammingLanguage::from_path("main.py"), ProgrammingLanguage::Python);
+        assert_eq!(ProgrammingLanguage::from_path("types.pyi"), ProgrammingLanguage::Python);
+    }
+
+    #[test]
+    fn test_lang_csharp() {
+        assert_eq!(ProgrammingLanguage::from_path("Program.cs"), ProgrammingLanguage::CSharp);
+        assert_eq!(ProgrammingLanguage::from_path("script.csx"), ProgrammingLanguage::CSharp);
+    }
+
+    #[test]
+    fn test_lang_go() {
+        assert_eq!(ProgrammingLanguage::from_path("main.go"), ProgrammingLanguage::Go);
+    }
+
+    #[test]
+    fn test_lang_java_kotlin() {
+        assert_eq!(ProgrammingLanguage::from_path("Main.java"), ProgrammingLanguage::Java);
+        assert_eq!(ProgrammingLanguage::from_path("App.kt"), ProgrammingLanguage::Kotlin);
+        assert_eq!(ProgrammingLanguage::from_path("build.kts"), ProgrammingLanguage::Kotlin);
+    }
+
+    #[test]
+    fn test_lang_cpp_c() {
+        assert_eq!(ProgrammingLanguage::from_path("main.cpp"), ProgrammingLanguage::Cpp);
+        assert_eq!(ProgrammingLanguage::from_path("file.cc"), ProgrammingLanguage::Cpp);
+        assert_eq!(ProgrammingLanguage::from_path("header.hpp"), ProgrammingLanguage::Cpp);
+        assert_eq!(ProgrammingLanguage::from_path("main.c"), ProgrammingLanguage::C);
+        assert_eq!(ProgrammingLanguage::from_path("header.h"), ProgrammingLanguage::C);
+    }
+
+    #[test]
+    fn test_lang_web() {
+        assert_eq!(ProgrammingLanguage::from_path("index.html"), ProgrammingLanguage::HTML);
+        assert_eq!(ProgrammingLanguage::from_path("styles.css"), ProgrammingLanguage::CSS);
+        assert_eq!(ProgrammingLanguage::from_path("styles.scss"), ProgrammingLanguage::CSS);
+    }
+
+    #[test]
+    fn test_lang_config_markup() {
+        assert_eq!(ProgrammingLanguage::from_path("README.md"), ProgrammingLanguage::Markdown);
+        assert_eq!(ProgrammingLanguage::from_path("config.yaml"), ProgrammingLanguage::YAML);
+        assert_eq!(ProgrammingLanguage::from_path("package.json"), ProgrammingLanguage::JSON);
+        assert_eq!(ProgrammingLanguage::from_path("Cargo.toml"), ProgrammingLanguage::TOML);
+    }
+
+    #[test]
+    fn test_lang_shell() {
+        assert_eq!(ProgrammingLanguage::from_path("build.sh"), ProgrammingLanguage::Shell);
+        assert_eq!(ProgrammingLanguage::from_path("script.ps1"), ProgrammingLanguage::Shell);
+    }
+
+    #[test]
+    fn test_lang_is_code() {
+        assert!(ProgrammingLanguage::Rust.is_code());
+        assert!(ProgrammingLanguage::TypeScript.is_code());
+        assert!(ProgrammingLanguage::Python.is_code());
+        assert!(!ProgrammingLanguage::Markdown.is_code());
+        assert!(!ProgrammingLanguage::YAML.is_code());
+        assert!(!ProgrammingLanguage::JSON.is_code());
+    }
+
+    #[test]
+    fn test_lang_as_str() {
+        assert_eq!(ProgrammingLanguage::Rust.as_str(), "Rust");
+        assert_eq!(ProgrammingLanguage::TypeScript.as_str(), "TypeScript");
+        assert_eq!(ProgrammingLanguage::CSharp.as_str(), "C#");
+        assert_eq!(ProgrammingLanguage::Cpp.as_str(), "C++");
+        assert_eq!(ProgrammingLanguage::Other("xml".to_string()).as_str(), "xml");
     }
 }
