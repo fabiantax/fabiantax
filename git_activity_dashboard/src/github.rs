@@ -2586,4 +2586,94 @@ mod tests {
         assert_eq!(ProgrammingLanguage::Cpp.as_str(), "C++");
         assert_eq!(ProgrammingLanguage::Other("xml".to_string()).as_str(), "xml");
     }
+
+    // =====================================================
+    // StatsGrouping Tests
+    // =====================================================
+
+    #[test]
+    fn test_stats_grouping_week_variants() {
+        assert_eq!(StatsGrouping::from_str("week"), Some(StatsGrouping::Week));
+        assert_eq!(StatsGrouping::from_str("week-filetype"), Some(StatsGrouping::WeekFileType));
+        assert_eq!(StatsGrouping::from_str("weekfiletype"), Some(StatsGrouping::WeekFileType));
+        assert_eq!(StatsGrouping::from_str("week-file"), Some(StatsGrouping::WeekFileType));
+        assert_eq!(StatsGrouping::from_str("week-repo"), Some(StatsGrouping::WeekRepo));
+        assert_eq!(StatsGrouping::from_str("weekrepo"), Some(StatsGrouping::WeekRepo));
+        assert_eq!(StatsGrouping::from_str("week-repo-filetype"), Some(StatsGrouping::WeekRepoFileType));
+        assert_eq!(StatsGrouping::from_str("week-category"), Some(StatsGrouping::WeekCategory));
+        assert_eq!(StatsGrouping::from_str("week-cat"), Some(StatsGrouping::WeekCategory));
+        assert_eq!(StatsGrouping::from_str("week-repo-category"), Some(StatsGrouping::WeekRepoCategory));
+        assert_eq!(StatsGrouping::from_str("week-repo-cat"), Some(StatsGrouping::WeekRepoCategory));
+        assert_eq!(StatsGrouping::from_str("week-lang"), Some(StatsGrouping::WeekLanguage));
+        assert_eq!(StatsGrouping::from_str("week-language"), Some(StatsGrouping::WeekLanguage));
+    }
+
+    #[test]
+    fn test_stats_grouping_month_variants() {
+        assert_eq!(StatsGrouping::from_str("month"), Some(StatsGrouping::Month));
+        assert_eq!(StatsGrouping::from_str("month-repo"), Some(StatsGrouping::MonthRepo));
+        assert_eq!(StatsGrouping::from_str("monthrepo"), Some(StatsGrouping::MonthRepo));
+        assert_eq!(StatsGrouping::from_str("month-filetype"), Some(StatsGrouping::MonthFileType));
+        assert_eq!(StatsGrouping::from_str("month-file"), Some(StatsGrouping::MonthFileType));
+        assert_eq!(StatsGrouping::from_str("month-category"), Some(StatsGrouping::MonthCategory));
+        assert_eq!(StatsGrouping::from_str("month-cat"), Some(StatsGrouping::MonthCategory));
+        assert_eq!(StatsGrouping::from_str("month-repo-category"), Some(StatsGrouping::MonthRepoCategory));
+        assert_eq!(StatsGrouping::from_str("month-repo-cat"), Some(StatsGrouping::MonthRepoCategory));
+        assert_eq!(StatsGrouping::from_str("month-lang"), Some(StatsGrouping::MonthLanguage));
+        assert_eq!(StatsGrouping::from_str("month-language"), Some(StatsGrouping::MonthLanguage));
+    }
+
+    #[test]
+    fn test_stats_grouping_case_insensitive() {
+        assert_eq!(StatsGrouping::from_str("WEEK"), Some(StatsGrouping::Week));
+        assert_eq!(StatsGrouping::from_str("Month-Repo"), Some(StatsGrouping::MonthRepo));
+        assert_eq!(StatsGrouping::from_str("WEEK-REPO-CATEGORY"), Some(StatsGrouping::WeekRepoCategory));
+    }
+
+    #[test]
+    fn test_stats_grouping_invalid() {
+        assert_eq!(StatsGrouping::from_str("invalid"), None);
+        assert_eq!(StatsGrouping::from_str("weekly"), None);
+        assert_eq!(StatsGrouping::from_str(""), None);
+        assert_eq!(StatsGrouping::from_str("day"), None);
+    }
+
+    // =====================================================
+    // Link Header Pagination Tests
+    // =====================================================
+
+    #[test]
+    fn test_parse_link_header_next_simple() {
+        let header = r#"<https://api.github.com/repos/owner/repo/commits/sha?page=2>; rel="next""#;
+        let result = parse_link_header_next(header);
+        assert_eq!(result, Some("https://api.github.com/repos/owner/repo/commits/sha?page=2".to_string()));
+    }
+
+    #[test]
+    fn test_parse_link_header_next_with_multiple_links() {
+        let header = r#"<https://api.github.com/repos/owner/repo/commits/sha?page=1>; rel="prev", <https://api.github.com/repos/owner/repo/commits/sha?page=3>; rel="next", <https://api.github.com/repos/owner/repo/commits/sha?page=10>; rel="last""#;
+        let result = parse_link_header_next(header);
+        assert_eq!(result, Some("https://api.github.com/repos/owner/repo/commits/sha?page=3".to_string()));
+    }
+
+    #[test]
+    fn test_parse_link_header_next_no_next() {
+        let header = r#"<https://api.github.com/repos/owner/repo/commits/sha?page=1>; rel="prev", <https://api.github.com/repos/owner/repo/commits/sha?page=10>; rel="last""#;
+        let result = parse_link_header_next(header);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_link_header_next_empty() {
+        let result = parse_link_header_next("");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_link_header_next_first_page() {
+        // First page typically has next and last, no prev
+        let header = r#"<https://api.github.com/repos/owner/repo/commits/sha?page=2>; rel="next", <https://api.github.com/repos/owner/repo/commits/sha?page=5>; rel="last""#;
+        let result = parse_link_header_next(header);
+        assert_eq!(result, Some("https://api.github.com/repos/owner/repo/commits/sha?page=2".to_string()));
+    }
 }
