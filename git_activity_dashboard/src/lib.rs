@@ -10,6 +10,10 @@ pub mod utils;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod git;
 
+// GitHub API integration (not available in WASM)
+#[cfg(not(target_arch = "wasm32"))]
+pub mod github;
+
 pub use analyzer::{
     GitAnalyzer, RepoStats, CommitInfo, TotalStats, DashboardData, ActivitySummary,
     ParseOptions, ParseError, GIT_LOG_FORMAT, GIT_LOG_DELIMITER, git_log_command,
@@ -23,6 +27,12 @@ pub use utils::{format_number, contribution_type_label, sort_by_value, calculate
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use git::{analyze_repo, find_repos, is_git_repo, get_head_hash, AnalyzeOptions, GitError};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use github::{
+    GitHubClient, GitHubRepo, GitHubScanOptions, GitHubRepoStats, ScanResult,
+    parse_date, get_month_range, get_last_month_range,
+};
 
 // WASM bindings
 #[cfg(feature = "wasm")]
