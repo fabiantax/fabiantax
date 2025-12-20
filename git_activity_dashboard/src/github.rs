@@ -26,6 +26,12 @@ pub struct GitHubRepo {
     #[serde(default)]
     pub language: Option<String>,
     pub default_branch: String,
+    /// When the repo was last pushed to
+    pub pushed_at: Option<String>,
+    /// When the repo was last updated
+    pub updated_at: Option<String>,
+    /// When the repo was created
+    pub created_at: Option<String>,
 }
 
 /// Language statistics from GitHub API (bytes per language)
@@ -69,6 +75,10 @@ pub struct GitHubScanOptions {
     pub include_private: bool,
     /// Skip cloning, only analyze existing repos
     pub skip_clone: bool,
+    /// Filter repos with activity since this date
+    pub since: Option<chrono::DateTime<chrono::Utc>>,
+    /// Filter repos with activity until this date
+    pub until: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Default for GitHubScanOptions {
@@ -80,8 +90,122 @@ impl Default for GitHubScanOptions {
             include_archived: false,
             include_private: true,
             skip_clone: false,
+            since: None,
+            until: None,
         }
     }
+}
+
+/// Parse a date string into a DateTime
+/// Supports: YYYY-MM-DD, month names (november, nov), YYYY-MM, relative (1 month ago)
+pub fn parse_date(input: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+
+    let input = input.trim().to_lowercase();
+    let now = Utc::now();
+
+    // Try YYYY-MM-DD format
+    if let Ok(date) = NaiveDate::parse_from_str(&input, "%Y-%m-%d") {
+        return Some(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?));
+    }
+
+    // Try YYYY-MM format (first day of month)
+    if let Ok(date) = NaiveDate::parse_from_str(&format!("{}-01", input), "%Y-%m-%d") {
+        return Some(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?));
+    }
+
+    // Try month name (current year or previous year if month is in future)
+    let month_num = match input.as_str() {
+        "january" | "jan" => Some(1),
+        "february" | "feb" => Some(2),
+        "march" | "mar" => Some(3),
+        "april" | "apr" => Some(4),
+        "may" => Some(5),
+        "june" | "jun" => Some(6),
+        "july" | "jul" => Some(7),
+        "august" | "aug" => Some(8),
+        "september" | "sep" | "sept" => Some(9),
+        "october" | "oct" => Some(10),
+        "november" | "nov" => Some(11),
+        "december" | "dec" => Some(12),
+        _ => None,
+    };
+
+    if let Some(month) = month_num {
+        let year = if month > now.month() {
+            now.year() - 1
+        } else {
+            now.year()
+        };
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, 1) {
+            return Some(Utc.from_utc_datetime(&date.and_hms_opt(0, 0, 0)?));
+        }
+    }
+
+    // Try relative date "X month(s) ago"
+    if input.contains("month") && input.contains("ago") {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        if let Some(num_str) = parts.first() {
+            if let Ok(months) = num_str.parse::<i32>() {
+                let target = now - chrono::Duration::days(months as i64 * 30);
+                return Some(target);
+            }
+        }
+    }
+
+    // Try relative date "X week(s) ago"
+    if input.contains("week") && input.contains("ago") {
+        let parts: Vec<&str> = input.split_whitespace().collect();
+        if let Some(num_str) = parts.first() {
+            if let Ok(weeks) = num_str.parse::<i64>() {
+                let target = now - chrono::Duration::weeks(weeks);
+                return Some(target);
+            }
+        }
+    }
+
+    None
+}
+
+/// Get the start and end dates for a given month
+pub fn get_month_range(input: &str) -> Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)> {
+    use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+
+    let start = parse_date(input)?;
+
+    // Get first day of next month
+    let (next_year, next_month) = if start.month() == 12 {
+        (start.year() + 1, 1)
+    } else {
+        (start.year(), start.month() + 1)
+    };
+
+    let end_date = NaiveDate::from_ymd_opt(next_year, next_month, 1)?;
+    let end = Utc.from_utc_datetime(&end_date.and_hms_opt(0, 0, 0)?);
+
+    Some((start, end))
+}
+
+/// Get the date range for "last month"
+pub fn get_last_month_range() -> (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) {
+    use chrono::{Datelike, NaiveDate, TimeZone, Utc};
+
+    let now = Utc::now();
+
+    // First day of current month (end of range)
+    let end_date = NaiveDate::from_ymd_opt(now.year(), now.month(), 1).unwrap();
+    let end = Utc.from_utc_datetime(&end_date.and_hms_opt(0, 0, 0).unwrap());
+
+    // First day of previous month (start of range)
+    let (prev_year, prev_month) = if now.month() == 1 {
+        (now.year() - 1, 12)
+    } else {
+        (now.year(), now.month() - 1)
+    };
+    let start_date = NaiveDate::from_ymd_opt(prev_year, prev_month, 1).unwrap();
+    let start = Utc.from_utc_datetime(&start_date.and_hms_opt(0, 0, 0).unwrap());
+
+    (start, end)
 }
 
 /// Result of scanning GitHub repositories
@@ -340,6 +464,24 @@ impl GitHubClient {
             .map_err(|e| format!("Failed to parse languages: {}", e))
     }
 
+    /// Check if a repo was active within the given date range
+    fn is_repo_in_date_range(repo: &GitHubRepo, since: Option<&chrono::DateTime<chrono::Utc>>, until: Option<&chrono::DateTime<chrono::Utc>>) -> bool {
+        use chrono::DateTime;
+
+        // Parse the pushed_at date
+        let pushed_at = repo.pushed_at.as_ref().and_then(|s| {
+            DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&chrono::Utc))
+        });
+
+        match (pushed_at, since, until) {
+            (Some(pushed), Some(start), Some(end)) => pushed >= *start && pushed < *end,
+            (Some(pushed), Some(start), None) => pushed >= *start,
+            (Some(pushed), None, Some(end)) => pushed < *end,
+            (None, _, _) => true, // Include repos without date info
+            (Some(_), None, None) => true,
+        }
+    }
+
     /// Get stats for all repos without cloning (API only)
     pub fn get_all_repo_stats(&self, username: Option<&str>, options: &GitHubScanOptions) -> Result<Vec<GitHubRepoStats>, String> {
         let username = if let Some(user) = username {
@@ -352,10 +494,19 @@ impl GitHubClient {
 
         println!("Fetching repository statistics for: {}", username);
 
+        // Print date filter info
+        if let Some(since) = &options.since {
+            println!("  Filtering: activity since {}", since.format("%Y-%m-%d"));
+        }
+        if let Some(until) = &options.until {
+            println!("  Filtering: activity until {}", until.format("%Y-%m-%d"));
+        }
+
         let repos = self.list_repos(Some(&username))?;
         println!("Found {} repositories, fetching stats...\n", repos.len());
 
         let mut stats = Vec::new();
+        let mut skipped_date = 0;
 
         for repo in repos {
             // Filter based on options
@@ -366,6 +517,12 @@ impl GitHubClient {
                 continue;
             }
             if repo.private && !options.include_private {
+                continue;
+            }
+
+            // Filter by date range
+            if !Self::is_repo_in_date_range(&repo, options.since.as_ref(), options.until.as_ref()) {
+                skipped_date += 1;
                 continue;
             }
 
@@ -404,6 +561,10 @@ impl GitHubClient {
                 file_count,
                 estimated_loc,
             });
+        }
+
+        if skipped_date > 0 {
+            println!("\n  (Skipped {} repos outside date range)", skipped_date);
         }
 
         Ok(stats)

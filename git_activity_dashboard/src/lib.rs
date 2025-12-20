@@ -29,7 +29,10 @@ pub use utils::{format_number, contribution_type_label, sort_by_value, calculate
 pub use git::{analyze_repo, find_repos, is_git_repo, get_head_hash, AnalyzeOptions, GitError};
 
 #[cfg(not(target_arch = "wasm32"))]
-pub use github::{GitHubClient, GitHubRepo, GitHubScanOptions, GitHubRepoStats, ScanResult};
+pub use github::{
+    GitHubClient, GitHubRepo, GitHubScanOptions, GitHubRepoStats, ScanResult,
+    parse_date, get_month_range, get_last_month_range,
+};
 
 // WASM bindings
 #[cfg(feature = "wasm")]

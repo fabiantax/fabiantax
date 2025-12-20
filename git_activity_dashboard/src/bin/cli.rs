@@ -3,6 +3,7 @@ use git_activity_dashboard::{
     GitAnalyzer, BadgeExporter, LinkedInExporter, MarkdownExporter, PortfolioExporter,
     analyze_repo, find_repos, is_git_repo, AnalyzeOptions,
     GitHubClient, GitHubScanOptions,
+    parse_date, get_month_range, get_last_month_range,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -91,6 +92,22 @@ struct Cli {
     /// Include archived repositories
     #[arg(long)]
     include_archived: bool,
+
+    /// Filter repos by activity since date (YYYY-MM-DD or relative: "1 month ago")
+    #[arg(long, value_name = "DATE")]
+    since: Option<String>,
+
+    /// Filter repos by activity until date (YYYY-MM-DD)
+    #[arg(long, value_name = "DATE")]
+    until: Option<String>,
+
+    /// Filter to repos with activity in the last month
+    #[arg(long)]
+    last_month: bool,
+
+    /// Filter to repos with activity in a specific month (e.g., "november", "2024-11")
+    #[arg(long, value_name = "MONTH")]
+    month: Option<String>,
 }
 
 fn print_summary(analyzer: &GitAnalyzer) {
@@ -287,6 +304,43 @@ fn handle_exports(cli: &Cli, analyzer: &GitAnalyzer) {
     }
 }
 
+/// Parse date range from CLI options
+fn get_date_range(cli: &Cli) -> (Option<chrono::DateTime<chrono::Utc>>, Option<chrono::DateTime<chrono::Utc>>) {
+    // --last-month takes priority
+    if cli.last_month {
+        let (start, end) = get_last_month_range();
+        return (Some(start), Some(end));
+    }
+
+    // --month takes next priority
+    if let Some(ref month) = cli.month {
+        if let Some((start, end)) = get_month_range(month) {
+            return (Some(start), Some(end));
+        } else {
+            eprintln!("Warning: Could not parse month '{}', ignoring filter", month);
+        }
+    }
+
+    // Parse --since and --until
+    let since = cli.since.as_ref().and_then(|s| {
+        let parsed = parse_date(s);
+        if parsed.is_none() {
+            eprintln!("Warning: Could not parse date '{}', ignoring --since", s);
+        }
+        parsed
+    });
+
+    let until = cli.until.as_ref().and_then(|s| {
+        let parsed = parse_date(s);
+        if parsed.is_none() {
+            eprintln!("Warning: Could not parse date '{}', ignoring --until", s);
+        }
+        parsed
+    });
+
+    (since, until)
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -310,6 +364,8 @@ fn main() {
             std::process::exit(1);
         }
 
+        let (since, until) = get_date_range(&cli);
+
         let options = GitHubScanOptions {
             username: username.clone(),
             clone_dir: cli.github_clone_dir.clone(),
@@ -317,6 +373,8 @@ fn main() {
             include_archived: cli.include_archived,
             include_private: true,
             skip_clone: true,
+            since,
+            until,
         };
 
         match client.get_all_repo_stats(username.as_deref(), &options) {
@@ -363,6 +421,8 @@ fn main() {
             std::process::exit(1);
         }
 
+        let (since, until) = get_date_range(&cli);
+
         let options = GitHubScanOptions {
             username: username.clone(),
             clone_dir: cli.github_clone_dir.clone(),
@@ -370,6 +430,8 @@ fn main() {
             include_archived: cli.include_archived,
             include_private: true,
             skip_clone: false,
+            since,
+            until,
         };
 
         let scan_result = match client.scan_repos(&options) {
