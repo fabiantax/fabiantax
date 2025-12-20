@@ -484,15 +484,16 @@ impl GitHubClient {
 
     /// Get stats for all repos without cloning (API only)
     pub fn get_all_repo_stats(&self, username: Option<&str>, options: &GitHubScanOptions) -> Result<Vec<GitHubRepoStats>, String> {
-        let username = if let Some(user) = username {
-            user.to_string()
+        // Determine if we're fetching for the authenticated user or a specific user
+        let (display_username, is_authenticated_user) = if let Some(user) = username {
+            (user.to_string(), false)
         } else if let Some(ref user) = options.username {
-            user.clone()
+            (user.clone(), false)
         } else {
-            self.get_authenticated_user()?
+            (self.get_authenticated_user()?, true)
         };
 
-        println!("Fetching repository statistics for: {}", username);
+        println!("Fetching repository statistics for: {}", display_username);
 
         // Print date filter info
         if let Some(since) = &options.since {
@@ -502,7 +503,12 @@ impl GitHubClient {
             println!("  Filtering: activity until {}", until.format("%Y-%m-%d"));
         }
 
-        let repos = self.list_repos(Some(&username))?;
+        // Use /user/repos for authenticated user (includes private repos), /users/{}/repos for others
+        let repos = if is_authenticated_user {
+            self.list_repos(None)?
+        } else {
+            self.list_repos(Some(&display_username))?
+        };
         println!("Found {} repositories, fetching stats...\n", repos.len());
 
         let mut stats = Vec::new();
@@ -529,13 +535,13 @@ impl GitHubClient {
             print!("  {} ", repo.name);
 
             // Fetch languages
-            let languages = match self.get_repo_languages(&username, &repo.name) {
+            let languages = match self.get_repo_languages(&display_username, &repo.name) {
                 Ok(langs) => langs,
                 Err(_) => std::collections::HashMap::new(),
             };
 
             // Fetch file tree for file type stats
-            let (file_types, file_count) = match self.get_repo_tree(&username, &repo.name, &repo.default_branch) {
+            let (file_types, file_count) = match self.get_repo_tree(&display_username, &repo.name, &repo.default_branch) {
                 Ok(types) => {
                     let count: u64 = types.values().map(|(c, _)| c).sum();
                     (types, count)
@@ -696,15 +702,21 @@ impl GitHubClient {
 
     /// Scan and optionally clone all repositories for a user
     pub fn scan_repos(&self, options: &GitHubScanOptions) -> Result<ScanResult, String> {
-        let username = if let Some(ref user) = options.username {
-            user.clone()
+        // Determine if we're fetching for the authenticated user or a specific user
+        let (username, is_authenticated_user) = if let Some(ref user) = options.username {
+            (user.clone(), false)
         } else {
-            self.get_authenticated_user()?
+            (self.get_authenticated_user()?, true)
         };
 
         println!("Fetching repositories for: {}", username);
 
-        let repos = self.list_repos(Some(&username))?;
+        // Use /user/repos for authenticated user (includes private repos), /users/{}/repos for others
+        let repos = if is_authenticated_user {
+            self.list_repos(None)?
+        } else {
+            self.list_repos(Some(&username))?
+        };
         println!("Found {} repositories", repos.len());
 
         let mut result = ScanResult {
