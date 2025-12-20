@@ -116,11 +116,13 @@ pub enum StatsGrouping {
     WeekRepo,
     WeekRepoFileType,
     WeekCategory,
+    WeekRepoCategory,
     WeekLanguage,
     Month,
     MonthRepo,
     MonthFileType,
     MonthCategory,
+    MonthRepoCategory,
     MonthLanguage,
 }
 
@@ -132,11 +134,13 @@ impl StatsGrouping {
             "week-repo" | "weekrepo" => Some(Self::WeekRepo),
             "week-repo-filetype" | "weekrepofiletype" | "week-repo-file" => Some(Self::WeekRepoFileType),
             "week-category" | "weekcategory" | "week-cat" => Some(Self::WeekCategory),
+            "week-repo-category" | "weekrepocategory" | "week-repo-cat" => Some(Self::WeekRepoCategory),
             "week-lang" | "weeklang" | "week-language" => Some(Self::WeekLanguage),
             "month" => Some(Self::Month),
             "month-repo" | "monthrepo" => Some(Self::MonthRepo),
             "month-filetype" | "monthfiletype" | "month-file" => Some(Self::MonthFileType),
             "month-category" | "monthcategory" | "month-cat" => Some(Self::MonthCategory),
+            "month-repo-category" | "monthrepocategory" | "month-repo-cat" => Some(Self::MonthRepoCategory),
             "month-lang" | "monthlang" | "month-language" => Some(Self::MonthLanguage),
             _ => None,
         }
@@ -1908,6 +1912,72 @@ impl GitHubClient {
                 }
             }
 
+            StatsGrouping::WeekRepoCategory => {
+                // Aggregate by week, then repo, then category
+                let mut weekly_repo_categories: HashMap<String, HashMap<String, HashMap<String, (u64, u64, u64)>>> = HashMap::new();
+                let mut excluded_count: u64 = 0;
+
+                for s in stats {
+                    let week_entry = weekly_repo_categories.entry(s.week.clone()).or_insert_with(HashMap::new);
+                    let repo_entry = week_entry.entry(s.repo.clone()).or_insert_with(HashMap::new);
+
+                    for file_stat in &s.file_stats {
+                        let category = FileCategory::from_path(&file_stat.path);
+                        if category.is_excluded() {
+                            excluded_count += 1;
+                            continue;
+                        }
+                        let entry = repo_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1;
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
+                    }
+                }
+
+                let mut sorted_weeks: Vec<_> = weekly_repo_categories.keys().cloned().collect();
+                sorted_weeks.sort_by(|a, b| b.cmp(a));
+
+                if excluded_count > 0 {
+                    println!("\n(Excluded {} files: lock files, node_modules, vendor)", excluded_count);
+                }
+
+                for week in sorted_weeks.iter().take(period_limit) {
+                    println!("\n{}", "=".repeat(80));
+                    println!("Week: {}", week);
+                    println!("{}", "=".repeat(80));
+
+                    if let Some(repos) = weekly_repo_categories.get(week) {
+                        // Sort repos by total additions
+                        let mut sorted_repos: Vec<_> = repos.iter().collect();
+                        sorted_repos.sort_by(|a, b| {
+                            let total_a: u64 = a.1.values().map(|v| v.1).sum();
+                            let total_b: u64 = b.1.values().map(|v| v.1).sum();
+                            total_b.cmp(&total_a)
+                        });
+
+                        for (repo, categories) in sorted_repos.iter().take(5) {
+                            let total_files: u64 = categories.values().map(|v| v.0).sum();
+                            let total_add: u64 = categories.values().map(|v| v.1).sum();
+                            let total_del: u64 = categories.values().map(|v| v.2).sum();
+                            let total_net = total_add as i64 - total_del as i64;
+
+                            println!("\n  {} ({} files, {:+} LOC)", repo, total_files, total_net);
+                            println!("  {:15} {:>10} {:>12} {:>12} {:>12}", "Category", "Files", "Additions", "Deletions", "Net LOC");
+
+                            let mut sorted_cats: Vec<_> = categories.iter().collect();
+                            sorted_cats.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by additions
+
+                            for (cat, (files, additions, deletions)) in sorted_cats {
+                                let net = *additions as i64 - *deletions as i64;
+                                let bar = "█".repeat(std::cmp::min(*files as usize / 2, 15));
+                                println!("  {:15} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                    cat, files, additions, deletions, net, bar);
+                            }
+                        }
+                    }
+                }
+            }
+
             StatsGrouping::MonthCategory => {
                 // Aggregate by month and file category
                 let mut monthly_categories: HashMap<String, HashMap<String, (u64, u64, u64)>> = HashMap::new();
@@ -1954,6 +2024,73 @@ impl GitHubClient {
                             let bar = "█".repeat(std::cmp::min(*files as usize / 5, 15));
                             println!("{:15} {:>10} {:>+12} {:>12} {:>+12}  {}",
                                 cat, files, additions, deletions, net, bar);
+                        }
+                    }
+                }
+            }
+
+            StatsGrouping::MonthRepoCategory => {
+                // Aggregate by month, then repo, then category
+                let mut monthly_repo_categories: HashMap<String, HashMap<String, HashMap<String, (u64, u64, u64)>>> = HashMap::new();
+                let mut excluded_count: u64 = 0;
+
+                for s in stats {
+                    let month = Self::week_to_month(&s.week);
+                    let month_entry = monthly_repo_categories.entry(month).or_insert_with(HashMap::new);
+                    let repo_entry = month_entry.entry(s.repo.clone()).or_insert_with(HashMap::new);
+
+                    for file_stat in &s.file_stats {
+                        let category = FileCategory::from_path(&file_stat.path);
+                        if category.is_excluded() {
+                            excluded_count += 1;
+                            continue;
+                        }
+                        let entry = repo_entry.entry(category.as_str().to_string()).or_insert((0, 0, 0));
+                        entry.0 += 1;
+                        entry.1 += file_stat.additions;
+                        entry.2 += file_stat.deletions;
+                    }
+                }
+
+                let mut sorted_months: Vec<_> = monthly_repo_categories.keys().cloned().collect();
+                sorted_months.sort_by(|a, b| b.cmp(a));
+
+                if excluded_count > 0 {
+                    println!("\n(Excluded {} files: lock files, node_modules, vendor)", excluded_count);
+                }
+
+                for month in sorted_months.iter().take(period_limit) {
+                    println!("\n{}", "=".repeat(80));
+                    println!("Month: {}", month);
+                    println!("{}", "=".repeat(80));
+
+                    if let Some(repos) = monthly_repo_categories.get(month) {
+                        // Sort repos by total additions
+                        let mut sorted_repos: Vec<_> = repos.iter().collect();
+                        sorted_repos.sort_by(|a, b| {
+                            let total_a: u64 = a.1.values().map(|v| v.1).sum();
+                            let total_b: u64 = b.1.values().map(|v| v.1).sum();
+                            total_b.cmp(&total_a)
+                        });
+
+                        for (repo, categories) in sorted_repos.iter().take(10) {
+                            let total_files: u64 = categories.values().map(|v| v.0).sum();
+                            let total_add: u64 = categories.values().map(|v| v.1).sum();
+                            let total_del: u64 = categories.values().map(|v| v.2).sum();
+                            let total_net = total_add as i64 - total_del as i64;
+
+                            println!("\n  {} ({} files, {:+} LOC)", repo, total_files, total_net);
+                            println!("  {:15} {:>10} {:>12} {:>12} {:>12}", "Category", "Files", "Additions", "Deletions", "Net LOC");
+
+                            let mut sorted_cats: Vec<_> = categories.iter().collect();
+                            sorted_cats.sort_by(|a, b| b.1.1.cmp(&a.1.1)); // Sort by additions
+
+                            for (cat, (files, additions, deletions)) in sorted_cats {
+                                let net = *additions as i64 - *deletions as i64;
+                                let bar = "█".repeat(std::cmp::min(*files as usize / 5, 15));
+                                println!("  {:15} {:>10} {:>+12} {:>12} {:>+12}  {}",
+                                    cat, files, additions, deletions, net, bar);
+                            }
                         }
                     }
                 }
