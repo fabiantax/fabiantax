@@ -2,6 +2,7 @@ use clap::Parser;
 use git_activity_dashboard::{
     GitAnalyzer, BadgeExporter, LinkedInExporter, MarkdownExporter, PortfolioExporter,
     analyze_repo, find_repos, is_git_repo, AnalyzeOptions,
+    GitHubClient, GitHubScanOptions,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -66,6 +67,30 @@ struct Cli {
     /// Include files that match .gitignore patterns (disabled by default)
     #[arg(long)]
     include_ignored: bool,
+
+    // ─────────────────────────────────────────────────────────────
+    // GitHub Integration (requires GITHUB_TOKEN environment variable)
+    // ─────────────────────────────────────────────────────────────
+
+    /// Scan all GitHub repos for a user (stats only, no cloning)
+    #[arg(long, value_name = "USERNAME")]
+    github_stats: Option<Option<String>>,
+
+    /// Scan GitHub repos and clone missing ones for full analysis
+    #[arg(long, value_name = "USERNAME")]
+    github_scan: Option<Option<String>>,
+
+    /// Directory to clone GitHub repos into (default: ./github_repos)
+    #[arg(long, value_name = "DIR", default_value = "./github_repos")]
+    github_clone_dir: PathBuf,
+
+    /// Include forked repositories
+    #[arg(long)]
+    include_forks: bool,
+
+    /// Include archived repositories
+    #[arg(long)]
+    include_archived: bool,
 }
 
 fn print_summary(analyzer: &GitAnalyzer) {
@@ -209,8 +234,203 @@ fn print_summary(analyzer: &GitAnalyzer) {
     println!("\n{}\n", "=".repeat(60));
 }
 
+fn handle_exports(cli: &Cli, analyzer: &GitAnalyzer) {
+    if let Some(export_dir) = &cli.all_exports {
+        fs::create_dir_all(export_dir).expect("Failed to create export directory");
+
+        let json = serde_json::to_string_pretty(&analyzer.get_dashboard_data()).unwrap_or_default();
+        fs::write(export_dir.join("activity.json"), json).expect("Failed to write JSON");
+        fs::write(export_dir.join("report.md"), MarkdownExporter::export(analyzer)).expect("Failed to write Markdown");
+        fs::write(export_dir.join("linkedin.txt"), LinkedInExporter::export(analyzer)).expect("Failed to write LinkedIn");
+        fs::write(export_dir.join("portfolio.md"), PortfolioExporter::export(analyzer)).expect("Failed to write Portfolio");
+        fs::write(export_dir.join("badge.md"), BadgeExporter::export(analyzer)).expect("Failed to write Badge");
+
+        if !cli.quiet {
+            println!("All exports saved to: {}", export_dir.display());
+        }
+    } else {
+        if let Some(path) = &cli.json {
+            let json = serde_json::to_string_pretty(&analyzer.get_dashboard_data()).unwrap_or_default();
+            fs::write(path, json).expect("Failed to write JSON");
+            if !cli.quiet {
+                println!("JSON exported to: {}", path.display());
+            }
+        }
+
+        if let Some(path) = &cli.markdown {
+            fs::write(path, MarkdownExporter::export(analyzer)).expect("Failed to write Markdown");
+            if !cli.quiet {
+                println!("Markdown exported to: {}", path.display());
+            }
+        }
+
+        if let Some(path) = &cli.linkedin {
+            fs::write(path, LinkedInExporter::export(analyzer)).expect("Failed to write LinkedIn");
+            if !cli.quiet {
+                println!("LinkedIn summary exported to: {}", path.display());
+            }
+        }
+
+        if let Some(path) = &cli.portfolio {
+            fs::write(path, PortfolioExporter::export(analyzer)).expect("Failed to write Portfolio");
+            if !cli.quiet {
+                println!("Portfolio exported to: {}", path.display());
+            }
+        }
+
+        if let Some(path) = &cli.badge {
+            fs::write(path, BadgeExporter::export(analyzer)).expect("Failed to write Badge");
+            if !cli.quiet {
+                println!("Badge exported to: {}", path.display());
+            }
+        }
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
+
+    // ─────────────────────────────────────────────────────────────
+    // GitHub Stats Mode (API only, no cloning)
+    // ─────────────────────────────────────────────────────────────
+    if cli.github_stats.is_some() {
+        let username = cli.github_stats.as_ref().and_then(|u| u.clone());
+
+        let client = match GitHubClient::new() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Error creating GitHub client: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        if !client.is_authenticated() {
+            eprintln!("Error: GITHUB_TOKEN environment variable not set.");
+            eprintln!("Set it with: export GITHUB_TOKEN=your_token");
+            std::process::exit(1);
+        }
+
+        let options = GitHubScanOptions {
+            username: username.clone(),
+            clone_dir: cli.github_clone_dir.clone(),
+            include_forks: cli.include_forks,
+            include_archived: cli.include_archived,
+            include_private: true,
+            skip_clone: true,
+        };
+
+        match client.get_all_repo_stats(username.as_deref(), &options) {
+            Ok(stats) => {
+                if !cli.quiet {
+                    GitHubClient::print_stats_summary(&stats);
+                }
+
+                // Export to JSON if requested
+                if let Some(path) = &cli.json {
+                    let json = serde_json::to_string_pretty(&stats).unwrap_or_default();
+                    fs::write(path, json).expect("Failed to write JSON");
+                    if !cli.quiet {
+                        println!("JSON exported to: {}", path.display());
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Error fetching GitHub stats: {}", e);
+                std::process::exit(1);
+            }
+        }
+
+        return;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // GitHub Scan Mode (clone and analyze)
+    // ─────────────────────────────────────────────────────────────
+    if cli.github_scan.is_some() {
+        let username = cli.github_scan.as_ref().and_then(|u| u.clone());
+
+        let client = match GitHubClient::new() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("Error creating GitHub client: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        if !client.is_authenticated() {
+            eprintln!("Error: GITHUB_TOKEN environment variable not set.");
+            eprintln!("Set it with: export GITHUB_TOKEN=your_token");
+            std::process::exit(1);
+        }
+
+        let options = GitHubScanOptions {
+            username: username.clone(),
+            clone_dir: cli.github_clone_dir.clone(),
+            include_forks: cli.include_forks,
+            include_archived: cli.include_archived,
+            include_private: true,
+            skip_clone: false,
+        };
+
+        let scan_result = match client.scan_repos(&options) {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("Error scanning GitHub repos: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        if !cli.quiet {
+            println!("\nScan complete:");
+            println!("  Cloned: {}", scan_result.cloned.len());
+            println!("  Already existed: {}", scan_result.existing.len());
+            println!("  Skipped: {}", scan_result.skipped.len());
+            println!("  Failed: {}", scan_result.failed.len());
+        }
+
+        // Now analyze the repos
+        let mut analyzer = GitAnalyzer::new(cli.email.clone(), cli.author.clone());
+
+        let analyze_options = AnalyzeOptions {
+            author_email: cli.email.clone(),
+            author_name: cli.author.clone(),
+            since_commit: None,
+            max_commits: cli.max_commits,
+            store_commits: false,
+            respect_gitignore: !cli.include_ignored,
+        };
+
+        for path in &scan_result.repo_paths {
+            if !cli.quiet {
+                println!("Analyzing: {}", path.display());
+            }
+
+            match analyze_repo(path, &analyze_options) {
+                Ok(stats) => {
+                    analyzer.add_repo_data(stats);
+                }
+                Err(e) => {
+                    if !cli.quiet {
+                        eprintln!("Warning: Failed to analyze {}: {}", path.display(), e);
+                    }
+                }
+            }
+        }
+
+        if !analyzer.get_repos().is_empty() {
+            analyzer.cache_stats();
+            if !cli.quiet {
+                print_summary(&analyzer);
+            }
+            handle_exports(&cli, &analyzer);
+        }
+
+        return;
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Local Repository Mode (original behavior)
+    // ─────────────────────────────────────────────────────────────
 
     // Determine which repos to analyze
     let repo_paths: Vec<PathBuf> = if !cli.repos.is_empty() {
@@ -289,54 +509,5 @@ fn main() {
     }
 
     // Handle exports
-    if let Some(export_dir) = &cli.all_exports {
-        fs::create_dir_all(export_dir).expect("Failed to create export directory");
-
-        let json = serde_json::to_string_pretty(&analyzer.get_dashboard_data()).unwrap_or_default();
-        fs::write(export_dir.join("activity.json"), json).expect("Failed to write JSON");
-        fs::write(export_dir.join("report.md"), MarkdownExporter::export(&analyzer)).expect("Failed to write Markdown");
-        fs::write(export_dir.join("linkedin.txt"), LinkedInExporter::export(&analyzer)).expect("Failed to write LinkedIn");
-        fs::write(export_dir.join("portfolio.md"), PortfolioExporter::export(&analyzer)).expect("Failed to write Portfolio");
-        fs::write(export_dir.join("badge.md"), BadgeExporter::export(&analyzer)).expect("Failed to write Badge");
-
-        if !cli.quiet {
-            println!("All exports saved to: {}", export_dir.display());
-        }
-    } else {
-        if let Some(path) = &cli.json {
-            let json = serde_json::to_string_pretty(&analyzer.get_dashboard_data()).unwrap_or_default();
-            fs::write(path, json).expect("Failed to write JSON");
-            if !cli.quiet {
-                println!("JSON exported to: {}", path.display());
-            }
-        }
-
-        if let Some(path) = &cli.markdown {
-            fs::write(path, MarkdownExporter::export(&analyzer)).expect("Failed to write Markdown");
-            if !cli.quiet {
-                println!("Markdown exported to: {}", path.display());
-            }
-        }
-
-        if let Some(path) = &cli.linkedin {
-            fs::write(path, LinkedInExporter::export(&analyzer)).expect("Failed to write LinkedIn");
-            if !cli.quiet {
-                println!("LinkedIn summary exported to: {}", path.display());
-            }
-        }
-
-        if let Some(path) = &cli.portfolio {
-            fs::write(path, PortfolioExporter::export(&analyzer)).expect("Failed to write Portfolio");
-            if !cli.quiet {
-                println!("Portfolio exported to: {}", path.display());
-            }
-        }
-
-        if let Some(path) = &cli.badge {
-            fs::write(path, BadgeExporter::export(&analyzer)).expect("Failed to write Badge");
-            if !cli.quiet {
-                println!("Badge exported to: {}", path.display());
-            }
-        }
-    }
+    handle_exports(&cli, &analyzer);
 }
