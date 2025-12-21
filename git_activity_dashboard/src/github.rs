@@ -1144,6 +1144,34 @@ impl GitHubClient {
         Ok(user.login)
     }
 
+    /// Fetch README content for a repository
+    pub fn get_readme(&self, owner: &str, repo: &str) -> Result<String, String> {
+        let token = self.token.as_ref().ok_or("No GitHub token configured")?;
+
+        let url = format!("https://api.github.com/repos/{}/{}/readme", owner, repo);
+
+        let response = self
+            .client
+            .get(&url)
+            .header(USER_AGENT, "git-activity-dashboard")
+            .header(ACCEPT, "application/vnd.github.raw")
+            .header(AUTHORIZATION, format!("Bearer {}", token))
+            .send()
+            .map_err(|e| format!("Failed to fetch README: {}", e))?;
+
+        if response.status().as_u16() == 404 {
+            return Ok(String::new()); // No README
+        }
+
+        if !response.status().is_success() {
+            return Err(format!("GitHub API error: {}", response.status()));
+        }
+
+        response
+            .text()
+            .map_err(|e| format!("Failed to read README: {}", e))
+    }
+
     /// Fetch all repositories for a user
     pub fn list_repos(&self, username: Option<&str>) -> Result<Vec<GitHubRepo>, String> {
         let mut all_repos = Vec::new();
