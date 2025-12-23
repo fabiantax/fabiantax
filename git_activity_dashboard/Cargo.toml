@@ -46,10 +46,14 @@ js-sys = { version = "0.3", optional = true }
 git2 = "0.18"
 walkdir = "2.4"
 ignore = "0.4"  # gitignore pattern matching (same as ripgrep)
+rayon = "1.10"  # Parallel processing for snapshot analysis
 
 # GitHub API integration
 reqwest = { version = "0.11", features = ["json", "blocking"] }
 tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+
+# Cache directory detection
+dirs = "5.0"
 
 [dev-dependencies]
 wasm-bindgen-test = "0.3"

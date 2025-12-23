@@ -192,7 +192,7 @@ pub fn analyze_repo(path: &Path, options: &AnalyzeOptions) -> Result<RepoStats, 
 }
 
 /// Load .gitignore patterns from a repository (including nested gitignores)
-fn load_gitignore(repo_path: &Path) -> Option<Gitignore> {
+pub fn load_gitignore(repo_path: &Path) -> Option<Gitignore> {
     use walkdir::WalkDir;
 
     let mut builder = GitignoreBuilder::new(repo_path);
