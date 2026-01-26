@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Git Activity Bar Charts</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        h1 {
+            text-align: center;
+            color: #7dd3fc;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.9rem;
+        }
+
+        .chart-container {
+            max-width: 1200px;
+            margin: 0 auto 40px;
+            background: #111;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .chart-container h2 {
+            color: #a78bfa;
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            height: 400px;
+        }
+
+        .stats-summary {
+            max-width: 1200px;
+            margin: 0 auto 40px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16162a 100%);
+            border-radius: 12px;
+            padding: 20px;
+            border: 1px solid #333;
+        }
+
+        .stat-card h3 {
+            font-size: 0.8rem;
+            color: #888;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #7dd3fc, #38bdf8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .load-section {
+            max-width: 600px;
+            margin: 0 auto 40px;
+            text-align: center;
+        }
+
+        .load-section textarea {
+            width: 100%;
+            height: 150px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 8px;
+            color: #e0e0e0;
+            font-family: 'SF Mono', 'Fira Code', monospace;
+            font-size: 0.75rem;
+            padding: 12px;
+            resize: vertical;
+        }
+
+        .load-section button {
+            margin-top: 12px;
+            padding: 12px 32px;
+            background: linear-gradient(135deg, #7dd3fc, #38bdf8);
+            border: none;
+            border-radius: 8px;
+            color: #0a0a0f;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .load-section button:hover {
+            transform: translateY(-2px);
+        }
+
+        .hint {
+            color: #666;
+            font-size: 0.8rem;
+            margin-top: 10px;
+        }
+
+        .sample-data {
+            color: #7dd3fc;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+
+        .view-controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 15px;
+        }
+
+        .view-btn {
+            padding: 10px 20px;
+            background: #1a1a2e;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #888;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 0.9rem;
+        }
+
+        .view-btn:hover {
+            border-color: #7dd3fc;
+            color: #7dd3fc;
+        }
+
+        .view-btn.active {
+            background: linear-gradient(135deg, #7dd3fc, #38bdf8);
+            border-color: transparent;
+            color: #0a0a0f;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <h1>📊 Git Activity Bar Charts</h1>
+    <p class="subtitle">Weekly commits, additions, deletions, and net LOC</p>
+
+    <div class="stats-summary">
+        <div class="stat-card">
+            <h3>Total Weeks</h3>
+            <div class="value" id="total-weeks">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Commits</h3>
+            <div class="value" id="total-commits">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Additions</h3>
+            <div class="value" id="total-additions">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Total Deletions</h3>
+            <div class="value" id="total-deletions">-</div>
+        </div>
+        <div class="stat-card">
+            <h3>Net LOC</h3>
+            <div class="value" id="net-loc">-</div>
+        </div>
+    </div>
+
+    <div class="load-section">
+        <div class="view-controls">
+            <button class="view-btn active" onclick="setView('week')" id="week-btn">Weekly View</button>
+            <button class="view-btn" onclick="setView('month')" id="month-btn">Monthly View</button>
+        </div>
+        <textarea id="data-input" placeholder="Paste your weekly activity data here (format: Week,Commits,Additions,Deletions,NetLOC per line)..."></textarea>
+        <button onclick="loadData()">Load Data</button>
+        <p class="hint">
+            Generate with: <code>git-activity --github-stats --since 2025-11-01 --group-by week</code>
+            or <span class="sample-data" onclick="loadSampleData()">load sample data</span>
+        </p>
+    </div>
+
+    <div class="chart-container">
+        <h2>📈 Weekly Commits</h2>
+        <div class="chart-wrapper">
+            <canvas id="commitsChart"></canvas>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <h2>➕ Weekly Additions</h2>
+        <div class="chart-wrapper">
+            <canvas id="additionsChart"></canvas>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <h2>➖ Weekly Deletions</h2>
+        <div class="chart-wrapper">
+            <canvas id="deletionsChart"></canvas>
+        </div>
+    </div>
+
+    <div class="chart-container">
+        <h2>📊 Net Lines of Code</h2>
+        <div class="chart-wrapper">
+            <canvas id="netLocChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let commitsChart, additionsChart, deletionsChart, netLocChart;
+        let currentView = 'week';
+        let currentData = null;
+
+        // Sample data from your activity
+        const sampleData = {
+            weeks: ['2025-W38', '2025-W39', '2025-W40', '2025-W41', '2025-W42', '2025-W43', '2025-W44', '2025-W45', '2025-W46', '2025-W47', '2025-W48', '2025-W49', '2025-W50', '2025-W51', '2025-W52', '2026-W01', '2026-W02', '2026-W03', '2026-W04', '2026-W05'],
+            commits: [4, 33, 40, 90, 11, 9, 62, 49, 187, 148, 19, 81, 26, 97, 120, 9, 28, 160, 202, 10],
+            additions: [31333, 596417, 211703, 644699, 2555457, 850729, 787831, 205536, 974084, 383319, 69592, 461517, 191766, 161914, 370979, 25690, 413733, 307391, 805526, 59229],
+            deletions: [0, 28869, 17026, 81689, 173814, 283207, 264557, 919, 2941, 9357, 914, 65977, 177360, 11420, 52548, 6381, 12339, 2818372, 429130, 143],
+            netLoc: [31333, 567548, 194677, 563010, 2381643, 567522, 523274, 204617, 971143, 373962, 68678, 395540, 14406, 150494, 318431, 19309, 401394, -2510981, 376396, 59086]
+        };
+
+        // Calculate moving average
+        function calculateMovingAverage(data, window) {
+            const result = [];
+            for (let i = 0; i < data.length; i++) {
+                const start = Math.max(0, i - window + 1);
+                const slice = data.slice(start, i + 1);
+                const avg = slice.reduce((a, b) => a + b, 0) / slice.length;
+                result.push(avg);
+            }
+            return result;
+        }
+
+        // Aggregate weekly data to monthly
+        function aggregateToMonthly(weeklyData) {
+            const monthMap = {};
+
+            weeklyData.weeks.forEach((week, i) => {
+                // Extract year and month from week string (e.g., "2025-W38" -> "2025-09")
+                const match = week.match(/(\d+)-W(\d+)/);
+                if (!match) return;
+
+                const year = parseInt(match[1]);
+                const weekNum = parseInt(match[2]);
+
+                // Convert week number to month
+                const date = new Date(year, 0, 1 + (weekNum - 1) * 7);
+                const monthKey = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+                if (!monthMap[monthKey]) {
+                    monthMap[monthKey] = { commits: 0, additions: 0, deletions: 0, netLoc: 0 };
+                }
+
+                monthMap[monthKey].commits += weeklyData.commits[i];
+                monthMap[monthKey].additions += weeklyData.additions[i];
+                monthMap[monthKey].deletions += weeklyData.deletions[i];
+                monthMap[monthKey].netLoc += weeklyData.netLoc[i];
+            });
+
+            const months = Object.keys(monthMap).sort();
+            return {
+                weeks: months,
+                commits: months.map(m => monthMap[m].commits),
+                additions: months.map(m => monthMap[m].additions),
+                deletions: months.map(m => monthMap[m].deletions),
+                netLoc: months.map(m => monthMap[m].netLoc)
+            };
+        }
+
+        function setView(view) {
+            currentView = view;
+            document.getElementById('week-btn').classList.toggle('active', view === 'week');
+            document.getElementById('month-btn').classList.toggle('active', view === 'month');
+
+            if (currentData) {
+                const data = view === 'week' ? currentData : aggregateToMonthly(currentData);
+                updateCharts(data);
+            }
+        }
+
+        function formatNumber(num) {
+            if (Math.abs(num) >= 1000000) {
+                return (num / 1000000).toFixed(1) + 'M';
+            } else if (Math.abs(num) >= 1000) {
+                return (num / 1000).toFixed(1) + 'K';
+            }
+            return num.toString();
+        }
+
+        function createChart(ctx, type, data, label, color, isNetLoc = false, showMovingAvg = false) {
+            const datasets = [{
+                type: 'bar',
+                label: label,
+                data: data.values,
+                backgroundColor: data.weeks.map((_, i) => {
+                    if (isNetLoc) {
+                        return data.values[i] >= 0 ? 'rgba(52, 211, 153, 0.7)' : 'rgba(248, 113, 113, 0.7)';
+                    }
+                    return color;
+                }),
+                borderColor: data.weeks.map((_, i) => {
+                    if (isNetLoc) {
+                        return data.values[i] >= 0 ? 'rgba(52, 211, 153, 1)' : 'rgba(248, 113, 113, 1)';
+                    }
+                    return color.replace('0.7', '1');
+                }),
+                borderWidth: 2
+            }];
+
+            // Add moving average line if enabled and enough data points
+            if (showMovingAvg && data.values.length >= 3) {
+                const window = Math.min(4, Math.floor(data.values.length / 2));
+                const ma = calculateMovingAverage(data.values, window);
+
+                datasets.push({
+                    type: 'line',
+                    label: `${window}-period Moving Avg`,
+                    data: ma,
+                    borderColor: 'rgba(255, 255, 255, 0.8)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    pointBackgroundColor: 'rgba(255, 255, 255, 0.9)',
+                    tension: 0.3,
+                    fill: false
+                });
+            }
+
+            return new Chart(ctx, {
+                data: {
+                    labels: data.weeks,
+                    datasets: datasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: { color: '#e0e0e0', font: { size: 14 } }
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: !isNetLoc,
+                            ticks: { color: '#888' },
+                            grid: { color: 'rgba(255,255,255,0.05)' }
+                        },
+                        x: {
+                            ticks: { color: '#888', maxRotation: 45 },
+                            grid: { display: false }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateCharts(data) {
+            // Store current data for view switching
+            currentData = data;
+
+            const showMovingAvg = currentView === 'week'; // Only show MA for weekly view
+
+            // Update stats
+            const totalCommits = data.commits.reduce((a, b) => a + b, 0);
+            const totalAdditions = data.additions.reduce((a, b) => a + b, 0);
+            const totalDeletions = data.deletions.reduce((a, b) => a + b, 0);
+            const netLoc = totalAdditions - totalDeletions;
+
+            document.getElementById('total-weeks').textContent = data.weeks.length;
+            document.getElementById('total-commits').textContent = totalCommits.toLocaleString();
+            document.getElementById('total-additions').textContent = formatNumber(totalAdditions);
+            document.getElementById('total-deletions').textContent = formatNumber(totalDeletions);
+            document.getElementById('net-loc').textContent = formatNumber(netLoc);
+
+            // Destroy existing charts
+            if (commitsChart) commitsChart.destroy();
+            if (additionsChart) additionsChart.destroy();
+            if (deletionsChart) deletionsChart.destroy();
+            if (netLocChart) netLocChart.destroy();
+
+            // Create new charts
+            const commitsCtx = document.getElementById('commitsChart').getContext('2d');
+            commitsChart = createChart(
+                commitsCtx,
+                'bar',
+                { weeks: data.weeks, values: data.commits },
+                'Commits',
+                'rgba(125, 211, 252, 0.7)',
+                false,
+                showMovingAvg
+            );
+
+            const additionsCtx = document.getElementById('additionsChart').getContext('2d');
+            additionsChart = createChart(
+                additionsCtx,
+                'bar',
+                { weeks: data.weeks, values: data.additions },
+                'Lines Added',
+                'rgba(52, 211, 153, 0.7)',
+                false,
+                showMovingAvg
+            );
+
+            const deletionsCtx = document.getElementById('deletionsChart').getContext('2d');
+            deletionsChart = createChart(
+                deletionsCtx,
+                'bar',
+                { weeks: data.weeks, values: data.deletions },
+                'Lines Deleted',
+                'rgba(248, 113, 113, 0.7)',
+                false,
+                showMovingAvg
+            );
+
+            const netLocCtx = document.getElementById('netLocChart').getContext('2d');
+            netLocChart = createChart(
+                netLocCtx,
+                'bar',
+                { weeks: data.weeks, values: data.netLoc },
+                'Net LOC',
+                'rgba(167, 139, 250, 0.7)',
+                true, // isNetLoc
+                showMovingAvg
+            );
+        }
+
+        function loadData() {
+            const input = document.getElementById('data-input').value.trim();
+            if (!input) {
+                alert('Please paste data or load sample data');
+                return;
+            }
+
+            try {
+                // Try parsing as JSON first
+                const json = JSON.parse(input);
+                updateCharts(json);
+            } catch (e) {
+                // Try parsing as text format
+                try {
+                    parseTextData(input);
+                } catch (e2) {
+                    alert('Failed to parse data. Please use the correct format.');
+                }
+            }
+        }
+
+        function parseTextData(text) {
+            const lines = text.split('\n');
+            const weeks = [];
+            const commits = [];
+            const additions = [];
+            const deletions = [];
+            const netLoc = [];
+
+            for (const line of lines) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length >= 5) {
+                    weeks.push(parts[0]);
+                    commits.push(parseInt(parts[1]));
+                    additions.push(parseInt(parts[2].replace('+', '')));
+                    deletions.push(parseInt(parts[3].replace(/[-+]/, '')));
+                    netLoc.push(parseInt(parts[4].replace(/[-+]/, '')));
+                }
+            }
+
+            if (weeks.length === 0) {
+                throw new Error('No valid data found');
+            }
+
+            updateCharts({ weeks, commits, additions, deletions, netLoc });
+        }
+
+        function loadSampleData() {
+            document.getElementById('data-input').value = JSON.stringify(sampleData, null, 2);
+            updateCharts(sampleData);
+        }
+
+        // Load sample data on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSampleData();
+        });
+    </script>
+</body>
+</html>

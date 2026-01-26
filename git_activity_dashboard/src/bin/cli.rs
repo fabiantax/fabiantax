@@ -120,6 +120,10 @@ struct Cli {
     /// Analyze current file state (LOC per category) instead of commit history
     #[arg(long)]
     snapshot: bool,
+
+    /// Save console output to file
+    #[arg(long, value_name = "FILE")]
+    output: Option<PathBuf>,
 }
 
 fn print_summary(analyzer: &GitAnalyzer) {
@@ -355,6 +359,27 @@ fn get_date_range(cli: &Cli) -> (Option<chrono::DateTime<chrono::Utc>>, Option<c
 
 fn main() {
     let cli = Cli::parse();
+
+    // Redirect stdout to file if --output is specified
+    #[cfg(unix)]
+    if let Some(ref output_path) = cli.output {
+        match fs::File::create(output_path) {
+            Ok(file) => {
+                unsafe {
+                    use std::os::unix::io::AsRawFd;
+                    if libc::dup2(file.as_raw_fd(), libc::STDOUT_FILENO) == -1 {
+                        eprintln!("Error: Failed to redirect output to file");
+                        std::process::exit(1);
+                    }
+                    std::mem::forget(file);
+                }
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to create output file {}: {}", output_path.display(), e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     // ─────────────────────────────────────────────────────────────
     // GitHub Stats Mode (API only, no cloning)
