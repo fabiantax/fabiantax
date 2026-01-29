@@ -33,12 +33,14 @@ Analysis of all 20 repository READMEs against best practices.
 - Features (3 pts)
 - Roadmap (3 pts)
 - FAQ (3 pts)
+- Diagrams (3 pts) - Architecture, flowcharts, data models
 
 ### Quality Checks (5 points)
 - Code blocks with syntax highlighting
 - Working links
 - Reasonable length
 - Proper formatting
+- **Diagrams in Mermaid format** (when diagrams are present)
 
 ## How to Use This Skill
 
@@ -60,6 +62,47 @@ Based on initial analysis:
 - **Changelog** - Important for tracking changes
 - **Configuration** - How to customize/setup the project
 - **Authors/Maintainers** - Who maintains this project
+- **Diagrams** - Architecture diagrams, flowcharts, and data models help users understand the system
+
+## Diagram Standards
+
+**✅ REQUIRED FORMAT:** All diagrams MUST be created using **Mermaid** syntax.
+
+**Why Mermaid?**
+- Text-based (version control friendly)
+- Renders natively on GitHub, GitLab, and many markdown editors
+- No external tools or image files needed
+- Easy to update and maintain
+- Supports: flowcharts, sequence diagrams, entity-relationship diagrams, gantt charts, and more
+
+**Mermaid Examples:**
+
+```mermaid
+flowchart TD
+    A[Start] --> B{Is it working?}
+    B -->|Yes| C[Great!]
+    B -->|No| D[Debug]
+    D --> B
+```
+
+```mermaid
+sequenceDiagram
+    User->>API: Request
+    API->>Database: Query
+    Database-->>API: Results
+    API-->>User: Response
+```
+
+**❌ AVOID:**
+- Image files (PNG, JPG) - not version-control friendly
+- External diagramming tools (draw.io, lucidchart) - creates external dependencies
+- ASCII art - hard to read and maintain
+
+**✅ GOOD PRACTICE:**
+- Include Mermaid diagrams directly in README.md
+- Keep diagrams simple and focused
+- Add brief descriptions before each diagram
+- Use consistent styling across all diagrams
 
 ## Recommendations
 
