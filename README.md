@@ -1,197 +1,12 @@
-# Git Activity Dashboard
+# Fabian Tax
 
-A high-performance Rust library and CLI tool for analyzing git contributions across repositories. Generates detailed analytics, activity summaries, and exports for portfolios, LinkedIn, and README badges.
+**Senior Technology Leader | 25 Years Experience | CTO / Fractional CTO / Senior C# Developer**
 
-## Features
-
-### Core Analytics
-- **Multi-Repository Analysis** - Analyze single repos or scan directories for all git repositories
-- **Author Filtering** - Filter commits by author email or name
-- **Contribution Breakdown** - Categorize changes into production code, tests, documentation, infrastructure, config, styling, and more
-- **Language Detection** - Automatically detect 30+ programming languages from file extensions
-- **Activity Tracking** - Daily, weekly, and monthly activity summaries with per-period breakdowns
-- **Incremental Updates** - Support for analyzing only new commits since last analysis
-
-### File Classification
-Smart file classification with 11 contribution types:
-- **Production Code** - Application source code
-- **Tests** - Unit tests, integration tests, e2e tests
-- **Documentation** - README, docs, guides, API documentation
-- **Specs & Config** - Package configs, CI/CD, linting rules
-- **Infrastructure** - Docker, Kubernetes, Terraform, deployment scripts
-- **Styling** - CSS, SCSS, Sass, styling frameworks
-- **Build Artifacts** - Compiled outputs, binaries, cached files
-- **Assets** - Images, fonts, media files
-- **Generated** - Lock files, type definitions, minified code
-- **Data** - CSV, databases, fixtures, migrations
-- **Other** - Unclassified files
-
-### Performance Optimizations
-- **SIMD-Accelerated Pattern Matching** - Uses Aho-Corasick automaton for O(n) multi-pattern matching
-- **Perfect Hash Functions (PHF)** - O(1) compile-time hash lookups for language/extension detection
-- **Gitignore Filtering** - Respects `.gitignore` patterns to skip build artifacts and dependencies
-- **Lazy Initialization** - Pattern matchers built once on first use
-- **Caching** - Computed stats are cached for repeated access
-
-### Export Formats
-Multiple export options for different use cases:
-- **JSON** - Full structured data for custom integrations
-- **Markdown** - Detailed report with tables and charts
-- **LinkedIn** - Social media ready summary with hashtags
-- **Portfolio** - Project showcase format for personal websites
-- **Badge/Widget** - README-embeddable activity summary
-
-### Platform Support
-- **Native CLI** - Fast command-line tool using libgit2 (no shell commands)
-- **WebAssembly (WASM)** - Browser-compatible library for web applications
-- **Library** - Embeddable Rust crate with full API
-
-## Installation
-
-### From Source
-```bash
-cd git_activity_dashboard
-cargo build --release
-```
-
-### Run CLI
-```bash
-cargo run --release -- --help
-```
-
-## CLI Usage
-
-```
-git-activity [OPTIONS]
-
-Git Activity Dashboard - Analyze your git contributions across repositories
-
-Options:
-  -r, --repos <PATH>        Specific repository paths to analyze
-  -s, --scan <DIR>          Scan directory for git repositories
-  -d, --depth <N>           Maximum depth when scanning for repos [default: 3]
-  -e, --email <EMAIL>       Filter commits by author email
-  -a, --author <NAME>       Filter commits by author name
-      --max-commits <N>     Maximum commits to analyze per repo
-      --json <FILE>         Export to JSON file
-      --markdown <FILE>     Export to Markdown file
-      --linkedin <FILE>     Export LinkedIn-ready summary
-      --portfolio <FILE>    Export project portfolio
-      --badge <FILE>        Export README badge/widget
-      --all-exports <DIR>   Export all formats to directory
-  -q, --quiet               Suppress console output
-      --include-ignored     Include files that match .gitignore patterns
-  -h, --help                Print help
-  -V, --version             Print version
-```
-
-### Examples
-
-Analyze current repository:
-```bash
-git-activity
-```
-
-Analyze with author filter:
-```bash
-git-activity -e "your@email.com"
-```
-
-Scan a directory for all repos:
-```bash
-git-activity -s ~/projects -d 2
-```
-
-Export all formats:
-```bash
-git-activity --all-exports ./exports
-```
-
-## Library Usage (Rust)
-
-```rust
-use git_activity_dashboard::{GitAnalyzer, analyze_repo, AnalyzeOptions};
-
-let options = AnalyzeOptions {
-    author_email: Some("your@email.com".to_string()),
-    respect_gitignore: true,
-    ..Default::default()
-};
-
-let stats = analyze_repo(Path::new("."), &options)?;
-let mut analyzer = GitAnalyzer::new(Some("your@email.com".to_string()), None);
-analyzer.add_repo_data(stats);
-
-// Get statistics
-let total = analyzer.get_total_stats();
-println!("Total commits: {}", total.total_commits);
-println!("Lines added: {}", total.total_lines_added);
-
-// Get activity
-let weekly = analyzer.get_weekly_activity(4);
-let monthly = analyzer.get_monthly_activity(6);
-```
-
-## WASM Usage (JavaScript)
-
-```javascript
-import init, { WasmAnalyzer, classifyFile } from 'git_activity_dashboard';
-
-await init();
-
-const analyzer = new WasmAnalyzer("your@email.com", null);
-
-// Parse git log output (run in your git repo):
-// git log --format='%H%x00%an%x00%ae%x00%aI%x00%s' --numstat
-analyzer.parseGitLog("my-repo", "/path/to/repo", gitLogOutput);
-
-// Get data
-const stats = analyzer.getTotalStats();
-const dashboard = analyzer.getDashboardData();
-
-// Export
-const markdown = analyzer.exportMarkdown();
-const linkedin = analyzer.exportLinkedIn();
-```
-
-## Architecture
-
-The codebase follows SOLID principles:
-
-- **Single Responsibility** - Separate modules for analysis, classification, export, and git operations
-- **Open/Closed** - Extensible via traits (`Classifier`, `Exporter`, `PeriodStrategy`)
-- **Liskov Substitution** - All implementations are substitutable via trait interfaces
-- **Interface Segregation** - Small, focused traits for each concern
-- **Dependency Inversion** - Core analyzer depends on abstractions, not concrete implementations
-
-### Module Structure
-```
-src/
-├── lib.rs          # Public API and WASM bindings
-├── analyzer.rs     # Core GitAnalyzer with statistics
-├── classifier.rs   # File classification with SIMD patterns
-├── exporters.rs    # Markdown, LinkedIn, Portfolio, Badge exporters
-├── git.rs          # Native git operations using libgit2
-├── parser.rs       # Git log parsing
-├── periods.rs      # Time period strategies (daily/weekly/monthly)
-├── traits.rs       # Trait definitions (Classifier, Exporter, etc.)
-├── utils.rs        # Utility functions
-└── tests/          # Dedicated test modules
-```
-
-## Supported Languages
-
-Python, JavaScript, TypeScript, C#, Java, Go, Rust, Ruby, PHP, Swift, Kotlin, Scala, C, C++, Vue, Svelte, HTML, SQL, R, MATLAB, Perl, Lua, Dart, Elm, Elixir, Erlang, Haskell, Clojure, F#, Shell, PowerShell, and more.
-
-## License
-
-MIT
+I'm Fabian. I love solving business problems with technical solutions.
 
 ---
 
 ## About Me
-
-I'm Fabian. I love solving business problems with technical solutions.
 
 I'm a senior technology leader with 25 years of development experience, 15+ years building scalable applications and 7+ years leading an international development team. Recognized as the "go-to person for complicated code challenges that other team members can't fix."
 
@@ -199,8 +14,134 @@ Most recently at Reptune, transformed technology from startup-phase to enterpris
 
 My approach focuses on removing bottlenecks and dependencies for sustainable growth—both in code architecture and team dynamics—ensuring operations run smoothly even as complexity increases.
 
-I'm seeking Technology leadership roles (CTO, Head of Development, Fractional CTO) or Senior C# Developer positions where complex problems need pragmatic solutions. Open to both permanent positions and fractional engagements (2-4 days/week).
+---
 
-**Ideal Focus Areas:** Start-ups, FinTech, RegTech, Enterprise SaaS, Scale-ups needing technical transformation, AI.
+## Quick Stats
 
-**Location Preference:** Amsterdam, Weesp, Naarden, Almere, Bussum, Hilversum and surrounding areas (public transport-accessible).
+| Metric | Value |
+|--------|-------|
+| **Years Experience** | 25+ |
+| **Leadership Experience** | 7+ years leading teams |
+| **Active Repositories** | 35+ |
+| **Primary Tech Stack** | C#, Rust, TypeScript, Python |
+
+---
+
+## Featured Projects
+
+### [git-activity-dashboard](https://github.com/fabiantax/git-activity-dashboard)
+
+High-performance Rust CLI and library for analyzing git contributions across repositories. Generate LinkedIn-ready summaries, portfolio reports, and activity badges from your git history.
+
+**Tech Stack:** Rust, WebAssembly, libgit2
+
+**Key Features:**
+- Multi-repository analysis with author filtering
+- 11-category file classification (production code, tests, docs, infrastructure, etc.)
+- 30+ programming language detection
+- Export to JSON, Markdown, LinkedIn, Portfolio, and Badge formats
+- SIMD-accelerated pattern matching for performance
+
+**Use Case:** Build tools to help developers showcase their work and generate professional content for LinkedIn and portfolios.
+
+---
+
+### Additional Repositories
+
+I maintain 35+ repositories covering:
+
+**Backend Development:**
+- Enterprise C# applications with .NET
+- High-performance microservices in Rust
+- Python automation and data processing
+
+**Frontend & Web:**
+- TypeScript/React applications
+- Real-time dashboards and visualizations
+- Progressive Web Apps (PWAs)
+
+**DevOps & Infrastructure:**
+- CI/CD pipelines (GitHub Actions, GitLab CI)
+- Docker and Kubernetes deployments
+- Cloud infrastructure (AWS, Azure)
+
+**Developer Tools:**
+- Git analytics and automation
+- Code quality analyzers
+- Video generation for developer portfolios
+
+---
+
+## Technical Expertise
+
+### Core Competencies
+
+| Area | Technologies |
+|------|--------------|
+| **Languages** | C#, Rust, TypeScript, Python, SQL |
+| **Frameworks** | .NET, ASP.NET Core, React, Node.js |
+| **Databases** | PostgreSQL, SQL Server, Redis, Elasticsearch |
+| **Cloud** | AWS, Azure, Docker, Kubernetes |
+| **Architecture** | Microservices, Event-Driven, DDD, SOLID |
+| **Leadership** | Team Building, Technical Strategy, Agile/Scrum |
+
+### Leadership Experience
+
+- **CTO / Head of Development** - Led international development teams through critical transformation phases
+- **Fractional CTO** - Helped startups scale from MVP to enterprise-grade architecture
+- **Technical Lead** - Architected solutions for FinTech, RegTech, and SaaS products
+- **Mentor** - Guided junior developers to senior roles through hands-on coaching
+
+---
+
+## What I'm Looking For
+
+**Open To:**
+- CTO roles (full-time or fractional)
+- Head of Development positions
+- Senior C# Developer roles
+- Technical Architecture consulting
+- 2-4 days/week fractional engagements
+
+**Ideal Focus Areas:**
+- Start-ups needing technical foundation
+- FinTech / RegTech (domain expertise)
+- Enterprise SaaS scale-ups
+- Companies requiring technical transformation
+- AI/ML-powered applications
+
+**Location:**
+- Amsterdam, Weesp, Naarden, Almere, Bussum, Hilversum and surrounding areas
+- Public transport-accessible locations
+- Open to remote/hybrid arrangements
+
+---
+
+## Featured Tools I've Built
+
+### Git Activity Dashboard
+
+A powerful CLI tool I created to help developers (including myself) showcase their work and generate professional content for LinkedIn, portfolios, and presentations.
+
+**Key Capabilities:**
+- Analyze git contributions across 35+ repositories
+- Generate LinkedIn-ready summaries with hashtags
+- Create animated videos of activity trends
+- Export portfolio-quality reports
+- Generate README badges and widgets
+
+This tool powers the analytics you see across my repositories and helps me maintain visibility into my technical contributions.
+
+---
+
+## Get In Touch
+
+- **Email:** [Available upon request]
+- **Location:** Amsterdam area, Netherlands
+- **Open To:** New opportunities and connections
+
+---
+
+*Last updated: January 2026*
+
+*Repository analytics powered by [git-activity-dashboard](https://github.com/fabiantax/git-activity-dashboard)*
