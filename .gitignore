@@ -1,0 +1,9 @@
+# This repo should only contain README.md
+# All other files are ignored
+*
+
+# But keep README.md
+!README.md
+
+# Keep .gitignore
+!.gitignore
