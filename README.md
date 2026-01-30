@@ -119,20 +119,17 @@ I'm a senior technology leader with **25 years of development experience**, 15+ 
 ---
 
 ### Atlas
-**Real-time code graph visualization for developers building with AI assistants**
+**Code graph analysis and visualization tool**
 
-**Tech Stack:** Rust, Tree-sitter, Graph Algorithms, Matryoshka Embeddings, RocksDB
+**Tech Stack:** Rust, Tree-sitter, Graph Algorithms, Matryoshka Embeddings
 
-**What it does:** Enables developers to visually watch their codebase architecture evolve in real-time. Generates C4 diagrams instantly as you code, with incremental scanning that updates only changed files. Multi-language support (Rust, Python, TypeScript, C#) with Claude Code integration for automatic architecture updates.
+**What it does:** Analyzes codebases as graphs to identify patterns, dependencies, and architectural structure. Multi-language support (Rust, Python, TypeScript, C#) with incremental parsing that only re-scans changed files.
 
 **Key Features:**
-- **Real-time C4 visualization** - Watch mode updates diagrams on every file change
-- **Incremental scanning** - Content-addressable caching, only re-parses modified files
-- **Complexity heatmaps** - Color-coded diagrams showing technical debt hotspots
+- **Graph-based code analysis** - Transform codebases into queryable dependency graphs
 - **Multi-language parsing** - Tree-sitter based support for 4+ languages
-- **AI assistant integration** - Hooks into Claude Code for automatic updates
-
-**Impact:** Fixed critical SIGSEGV issues with Matryoshka embeddings, enabling stable large-scale code analysis. Phase 1A complete with 20+ integrated crates covering parsing, storage, metrics, distributed coordination, and ML capabilities.
+- **Incremental scanning** - Only re-parse modified files for performance
+- **Claude Code integration** - MCP server for AI-assisted code exploration
 
 ---
 
