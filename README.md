@@ -121,13 +121,13 @@ I'm a senior technology leader with **25 years of development experience**, 15+ 
 ### Atlas
 **Code graph analysis and visualization tool**
 
-**Tech Stack:** Rust, Tree-sitter, Graph Algorithms, Matryoshka Embeddings
+**Tech Stack:** Rust, Graph Algorithms, Matryoshka Embeddings
 
 **What it does:** Analyzes codebases as graphs to identify patterns, dependencies, and architectural structure. Multi-language support (Rust, Python, TypeScript, C#) with incremental parsing that only re-scans changed files.
 
 **Key Features:**
 - **Graph-based code analysis** - Transform codebases into queryable dependency graphs
-- **Multi-language parsing** - Tree-sitter based support for 4+ languages
+- **Multi-language parsing** - Support for 4+ languages
 - **Incremental scanning** - Only re-parse modified files for performance
 - **Claude Code integration** - MCP server for AI-assisted code exploration
 
