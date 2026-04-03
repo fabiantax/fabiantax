@@ -16,7 +16,6 @@ I'm a senior technology leader with **25 years of development experience**, 15+ 
 
 ## 🎯 What I'm Looking For
 
-- **CTO / Head of Development** roles (full-time or fractional 2-4 days/week)
 - **Senior C# Developer** positions
 - **Technical Architecture** consulting
 
@@ -28,182 +27,105 @@ I'm a senior technology leader with **25 years of development experience**, 15+ 
 
 ## 💼 Featured Projects
 
-### [**git-activity-dashboard**](https://github.com/fabiantax/git-activity-dashboard)
-*High-performance Rust CLI for analyzing git contributions*
+### PEM Pal
+**AI-powered energy management for ME/CFS patients and cancer survivors with mitochondrial dysfunction**
 
-**Tech Stack:** Rust, WebAssembly, libgit2
+*(**P**ersonal **E**nergy **M**onitor, **P**redictor & **A**nalytics **L**ogger)*
 
-**What it does:** Helps developers showcase their work with LinkedIn-ready summaries, portfolio reports, and activity visualizations. Used to generate analytics for 35+ repositories.
+**Tech Stack:** Rust, Deno, Burn (ML), DuckDB-WASM, LSTM/TFT models
 
-**Business Value:** Developers can create professional content for LinkedIn and portfolios in minutes, not hours.
+**What it does:** Privacy-first health analytics that discovers personal crash patterns from wearable data. Predicts Post-Exertional Malaise (PEM) risk using HRV, heart rate, sleep, and activity metrics—helping users avoid energy crashes that can last days or weeks.
 
----
+**Who it helps:**
+- **ME/CFS patients** - Manage energy envelopes and prevent debilitating crashes
+- **Cancer survivors** - Navigate recovery with mitochondrial damage from chemotherapy/radiation
+- **Long COVID patients** - Understand post-viral energy patterns and pacing
 
-### **Storage & Infrastructure**
-
-#### [**RustFS**](https://github.com/fabiantax/rustfs)
-*Distributed S3-compatible object storage in Rust*
-
-**Tech Stack:** Rust, S3 API, Distributed Systems
-
-**Impact:** High-performance alternative to MinIO with Apache 2.0 license (no AGPL restrictions). Featured on HelloGitHub for innovation in open-source storage.
-
-**Use Cases:** Data lakes, AI workloads, big data storage, backup systems
+**Business Value:** Personalized ML models identify individual warning signs and safe activity levels. All data processed locally in the browser for complete privacy—no health data leaves the user's device.
 
 ---
 
-### **Graph & Data Intelligence**
+### fab-swarm
+**Self-improving multi-agent orchestration system with NER and knowledge graph capabilities**
 
-#### [**GraphFusion**](https://github.com/fabiantax/GraphFusion)
-*Graph query engine for code intelligence and technical debt analysis*
+**Tech Stack:** Rust, libSQL/Turso, GLiNER, Tree-sitter, MCP Server
 
-**Tech Stack:** Rust, TypeScript, Arrow Columnar Storage, Graph Algorithms
+**What it does:** Enables AI agents to coordinate as a swarm using stigmergy (environment-based coordination), eliminating context bloat while enabling massive parallelization. Self-improving system that learns optimal execution strategies over time.
 
-**What it does:** M&A due diligence, code intelligence, technical debt analysis through graph-native queries
+**Key Crates:**
+- **fab-swarm** - Core CLI and MCP server with 40+ tools, self-healing swarm orchestration
+- **fab-brain** - Personal knowledge graph with semantic search, "second brain" for AI-assisted knowledge curation
+- **fab-learn** - Learning system that tracks outcomes, learns optimal tier routing over time
+- **fab-entity** - High-performance graph-based NER with GLiNER (NAACL 2024 SOTA zero-shot entity extraction)
+- **fab-codebox** - Tree-sitter AST cache with query REPL for code intelligence (40+ languages)
+- **fab-lint** - Fast technical debt linter with jj integration
 
-**Business Value:** Reduces due diligence time from weeks to days by visualizing codebase dependencies and risk hotspots
+**What Makes It Different:**
+- **Nano-agents**: Deterministic tasks execute in ~50-500μs without LLM calls (vs. seconds for traditional agents)
+- **Stigmergy over messaging**: Agents coordinate through shared environment, not message passing (avoids N² message explosion)
+- **Auto-improving**: fab-learn tracks which model tiers work best for each task type, continuously optimizing
+- **Self-healing**: Automatic recovery from crashed agents with zero downtime
+- **Production-ready**: Follows hexagonal architecture, comprehensive testing with cargo-llvm-cov (44% coverage)
 
----
-
-### **Developer Tools**
-
-#### [**claude-hook-accelerator**](https://github.com/fabiantax/claude-hook-accelerator)
-*Claude Code workflow automation hooks*
-
-**Tech Stack:** TypeScript, Node.js, Claude AI API
-
-**What it does:** Pre-commit and pre-push automation for code quality, testing, and documentation generation
-
-**Productivity Gain:** Automates repetitive workflows, saves 2-3 hours per week per developer
-
----
-
-#### [**mermaid-lint**](https://github.com/fabiantax/mermaid-lint)
-*Diagram quality validation tool*
-
-**Tech Stack:** TypeScript, Mermaid.js, AST Parsing
-
-**What it does:** Validates Mermaid diagrams for correctness, best practices, and consistency
-
-**Business Value:** Prevents documentation errors that confuse teams and slow onboarding
+**Practices Followed:**
+- Hexagonal architecture with clean separation of concerns
+- Dependency injection for testability
+- Circuit breaker pattern for external API resilience
+- Rate limit pooling for distributed systems
+- Graceful shutdown with LIFO cleanup ordering
 
 ---
 
-#### [**vscode-ai-diagnostics**](https://github.com/fabiantax/vscode-ai-diagnostics)
-*AI-powered error diagnosis in VS Code*
+### repository-pattern-analyzers
+**Performance analyzers for C# 11-14 and .NET 9-10**
 
-**Tech Stack:** TypeScript, VS Code Extension API, Machine Learning
+**Tech Stack:** C#, Roslyn Analyzers, .NET 9-10 RC1
 
-**What it does:** Analyzes error messages and suggests solutions using AI
+**What it does:** 23 Roslyn analyzers providing 10-200x performance improvements for C# codebases
 
-**Productivity:** Reduces debugging time by 40% through intelligent error analysis
-
----
-
-### **Finance & RegTech**
-
-#### [**finance-analyzer**](https://github.com/fabiantax/finance-analyzer)
-*Financial data analysis and reporting automation*
-
-**Tech Stack:** Python, Pandas, Financial APIs
-
-**What it does:** Automated financial statement analysis, ratio calculation, and anomaly detection
-
-**Use Case:** Financial due diligence, automated reporting, risk assessment
+**Business Value:** Catches performance anti-patterns at compile-time before they reach production, eliminating costly refactoring cycles
 
 ---
 
-### **Infrastructure & DevOps**
+### agentdb-net
+**Complete C# 14 implementation of Google's ReasoningBank with self-learning capabilities**
 
-#### [**fab-swarm**](https://github.com/fabiantax/fab-swarm)
-*Docker swarm orchestration and monitoring*
+**Tech Stack:** C# 14, .NET 10, TensorPrimitives, SIMD (AVX-512/ARM SVE), Microsoft Agent Framework
 
-**Tech Stack:** Docker, Go, Prometheus, Grafana
+**What it does:** Production-ready AI memory engine built on Google's ReasoningBank architecture, fully implemented in C# 14 with .NET 10's native TensorPrimitives and SIMD vectorization for 30-250x performance improvements.
 
-**What it does:** Simplified Docker Swarm deployment with built-in monitoring and alerting
+**Self-Learning Capabilities:**
+- **9 Modern RL Algorithms**: MCTS, DQN, Dueling DQN, Rainbow, A2C, PPO, SAC, Q-Learning, Multi-Agent systems
+- **Reflexion Memory**: Self-critique and learning from failures
+- **Skill Library**: Pattern consolidation with k-means clustering
+- **Causal Memory Graph**: Pearl's do-calculus for understanding cause-and-effect
+- **Propensity Score Methods**: IPW (Inverse Probability Weighting) for causal inference
 
-**Business Value:** Reduces deployment complexity, enables self-service infrastructure for teams
+**Key Features:**
+- Hardware-accelerated vector operations with TensorPrimitives (AVX-512/ARM SVE)
+- Zero-allocation hot paths with Span<T> for maximum performance
+- Microsoft Agent Framework integration for AI workflow orchestration
+- 340+ tests with 90-95% coverage
+- 20 NuGet packages ready for production
+- Docker support with multi-stage builds
 
----
+**Performance:**
+- 30-250x faster than JavaScript implementation
+- Batch operations: 50,000 vector inserts/sec, 100,000 deletes/sec
+- 75% memory reduction compared to Node.js (200MB vs 800MB for 1M vectors)
 
-#### [**kintsu**](https://github.com/fabiantax/kintsu)
-*Infrastructure resilience testing platform*
-
-**Tech Stack:** Rust, Chaos Engineering, Fault Injection
-
-**What it does:** Automated chaos engineering and resilience testing for distributed systems
-
-**Impact:** Prevents production outages by testing failure scenarios before deployment
-
----
-
-### **AI & Language Models**
-
-#### [**multimodel-mcp**](https://github.com/fabiantax/multimodel-mcp)
-*Multi-model LLM orchestration platform*
-
-**Tech Stack:** Python, TypeScript, OpenAI API, Anthropic API
-
-**What it does:** Route requests to optimal AI models based on cost, speed, and quality requirements
-
-**Business Value:** Reduces AI infrastructure costs by 40% while maintaining quality
+**Status:** 100% complete, production-ready, fully documented with 25+ guides
 
 ---
 
-#### [**graph-nl**](https://github.com/fabiantax/graph-nl)
-*Natural language queries over graph databases*
+### Atlas
+**Code graph analysis and visualization tool**
 
-**Tech Stack:** Python, NLP, Graph Databases, Cypher
+**Tech Stack:** Rust, Graph Algorithms, Matryoshka Embeddings
 
-**What it does:** Convert natural language questions to graph queries
+**What it does:** Analyzes codebases as graphs to identify patterns, dependencies, and technical debt hotspots
 
-**Use Case:** Business users can query complex graph data without knowing Cypher/Gremlin
-
----
-
-### **Utilities & Libraries**
-
-#### [**git-grind**](https://github.com/fabiantax/git-grind)
-*Advanced git analytics and insights*
-
-**Tech Stack:** Rust, Git2, Analytics
-
-**What it does:** Deep analysis of git history for patterns, productivity, and team dynamics
-
-**Business Value:** Engineering leadership insights into productivity, bottlenecks, and collaboration patterns
-
----
-
-#### [**fab-pem**](https://github.com/fabiantax/fab-pem)
-*PEM certificate management library*
-
-**Tech Stack:** Rust, Cryptography, PKI
-
-**What it does:** Safe, ergonomic Rust library for managing PEM-encoded certificates and keys
-
-**Security:** Prevents certificate mishandling vulnerabilities in production systems
-
----
-
-#### [**gitpoort**](https://github.com/fabiantax/gitpoort)
-*Git repository quality gate*
-
-**Tech Stack:** Rust, Git Hooks, Quality Metrics
-
-**What it does:** Enforces repository quality standards before allowing commits/pushes
-
-**Impact:** Improves codebase consistency and reduces technical debt accumulation
-
----
-
-#### [**travel**](https://github.com/fabiantax/travel)
-*Travel itinerary planning automation*
-
-**Tech Stack:** Python, Travel APIs, Optimization
-
-**What it does:** Automated travel planning with cost and time optimization
-
-**Use Case:** Business travel planning with multi-stop optimization
+**Impact:** Fixed critical SIGSEGV issues with Matryoshka embeddings, enabling stable large-scale code analysis
 
 ---
 
@@ -214,8 +136,8 @@ I'm a senior technology leader with **25 years of development experience**, 15+ 
 | **Languages** | C#, Rust, TypeScript, Python, SQL |
 | **Frameworks** | .NET, ASP.NET Core, React, Node.js |
 | **Databases** | PostgreSQL, SQL Server, Redis, Elasticsearch |
-| **Cloud** | AWS, Azure, Docker, Kubernetes |
-| **Architecture** | Microservices, Event-Driven, DDD, SOLID |
+| **Cloud** | Azure, Cloudflare, Fly.io, Docker |
+| **Architecture** | Modular Monoliths, Microservices, Event-Driven, DDD, SOLID |
 | **Leadership** | Team Building, Technical Strategy, Agile/Scrum |
 
 ---
@@ -234,10 +156,8 @@ I'm a senior technology leader with **25 years of development experience**, 15+ 
 
 ## 🏆 Leadership Highlights
 
-- **CTO / Head of Development** - Led international teams through critical transformation phases
-- **Fractional CTO** - Helped startups scale from MVP to enterprise-grade architecture
+- **Fractional CTO** - Helped startups scale from MVP to enterprise-grade architecture, led international teams through critical transformation phases
 - **Technical Lead** - Architected FinTech, RegTech, and SaaS solutions
-- **Mentor** - Guided junior developers to senior roles through hands-on coaching
 
 ---
 
@@ -246,7 +166,3 @@ I'm a senior technology leader with **25 years of development experience**, 15+ 
 - **Email:** [Available upon request]
 - **Location:** Amsterdam area, Netherlands
 - **Open To:** New opportunities, connections, and collaborations
-
----
-
-*Repository analytics powered by [git-activity-dashboard](https://github.com/fabiantax/git-activity-dashboard) • Last updated: January 2026*

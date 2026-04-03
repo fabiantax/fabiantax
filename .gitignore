@@ -1,0 +1,19 @@
+# Development workspace files
+fabiantax.code-workspace
+.vscode/
+
+# Local documentation and analysis
+repo-readmes/
+CLAUDE.md
+
+# External projects (moved to their own repos)
+git_activity_dashboard/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
